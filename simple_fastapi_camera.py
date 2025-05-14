@@ -254,55 +254,82 @@ def get_depth_stream():
 # カメラストリームを提供する関数を追加
 def get_camera_stream():
     """カメラ映像のストリームを提供する関数"""
+    print("[CameraStream] Camera stream started")
+    
+    # キープアライブフレームを作成（データがない場合の表示用）
+    fallback_image = np.zeros((240, 320, 3), dtype=np.uint8)
+    cv2.putText(fallback_image, "Waiting for camera...", (60, 120), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    ret, fallback_buffer = cv2.imencode('.jpg', fallback_image, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+    
+    error_count = 0
+    
     while True:
-        current_frame = None
-        
-        # 共有メモリからカメラフレームを取得
-        with depth_map_lock:
-            if latest_camera_frame is None:
-                time.sleep(0.01)
+        try:
+            current_frame = None
+            current_timestamp = 0
+            
+            # 共有メモリからカメラフレームを取得
+            with depth_map_lock:
+                if latest_camera_frame is None:
+                    error_count += 1
+                    if error_count > 5:  # 5回連続でフレームがない場合はフォールバックイメージを表示
+                        print("[CameraStream] No camera frame available, using fallback")
+                        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + fallback_buffer.tobytes() + b'\r\n')
+                        error_count = 0  # リセット
+                    time.sleep(0.1)
+                    continue
+                current_frame = latest_camera_frame.copy()
+                current_timestamp = frame_timestamp
+                error_count = 0  # フレーム取得に成功したのでリセット
+            
+            if current_frame is None:
+                time.sleep(0.1)
                 continue
-            current_frame = latest_camera_frame.copy()
-            current_timestamp = frame_timestamp
+                
+            # カメラ処理時間測定開始
+            start_time = time.perf_counter()
             
-        if current_frame is None:
-            time.sleep(0.01)
-            continue
+            # FPSの計算
+            now = time.time()
+            if last_frame_times["camera"] > 0:
+                fps = 1.0 / (now - last_frame_times["camera"])
+                fps_stats["camera"].append(fps)
+            last_frame_times["camera"] = now
             
-        # カメラ処理時間測定開始
-        start_time = time.perf_counter()
-        
-        # FPSの計算
-        now = time.time()
-        if last_frame_times["camera"] > 0:
-            fps = 1.0 / (now - last_frame_times["camera"])
-            fps_stats["camera"].append(fps)
-        last_frame_times["camera"] = now
-        
-        # 情報をオーバーレイ表示
-        if len(fps_stats["camera"]) > 0:
-            avg_fps = sum(fps_stats["camera"]) / len(fps_stats["camera"])
-            cv2.putText(current_frame, f"FPS: {avg_fps:.1f}", (10, 30), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                       
-            # 遅延表示
-            delay = (time.time() - current_timestamp) * 1000
-            cv2.putText(current_frame, f"Delay: {delay:.1f}ms", (10, 60),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        
-        # 処理時間計測
-        camera_times.append(time.perf_counter() - start_time)
-        
-        # JPEG エンコード
-        start_time = time.perf_counter()
-        ret, buffer = cv2.imencode('.jpg', current_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
-        encoding_times.append(time.perf_counter() - start_time)
-        if not ret:
-            continue
+            # 情報をオーバーレイ表示
+            if len(fps_stats["camera"]) > 0:
+                avg_fps = sum(fps_stats["camera"]) / len(fps_stats["camera"])
+                cv2.putText(current_frame, f"FPS: {avg_fps:.1f}", (10, 30), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                           
+                # 遅延表示
+                delay = (time.time() - current_timestamp) * 1000
+                cv2.putText(current_frame, f"Delay: {delay:.1f}ms", (10, 60),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             
-        # フレームを送信
-        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-        time.sleep(0.015)  # 約66FPS
+            # 処理時間計測
+            camera_times.append(time.perf_counter() - start_time)
+            
+            # JPEG エンコード
+            start_time = time.perf_counter()
+            ret, buffer = cv2.imencode('.jpg', current_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+            encoding_times.append(time.perf_counter() - start_time)
+            if not ret:
+                continue
+                
+            # フレームを送信
+            yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+            time.sleep(0.015)  # 約66FPS
+            
+        except Exception as e:
+            print(f"[CameraStream] Error: {e}")
+            import traceback
+            print(traceback.format_exc())
+            
+            # エラー時にはフォールバックを表示
+            yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + fallback_buffer.tobytes() + b'\r\n')
+            time.sleep(0.1)
 
 def get_depth_grid_stream():
     while True:
@@ -399,31 +426,38 @@ async def index():
         <style>
             body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }
             .container { display: flex; flex-wrap: wrap; gap: 15px; }
-            .video-box { background: white; padding: 10px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); position: relative; }
+            .video-box { background: white; padding: 10px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); position: relative; min-height: 240px; width: 320px; }
+            .video-box img { display: block; width: 100%; height: auto; }
+            .video-box .loading-indicator { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #666; }
             h2 { margin-top: 0; color: #333; }
             .stats { margin-top: 20px; padding: 10px; background: #e8f5e9; border-radius: 5px; }
             #stats-container { font-family: monospace; }
+            .retry-button { margin-top: 5px; background: #2196F3; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; }
         </style>
     </head>
     <body>
         <h1>Fast Depth Processing System</h1>
         
         <div class="container">
-            <div class="video-box">
+            <div class="video-box" id="camera-box">
                 <h2>Camera Stream</h2>
-                <img src="/video" alt="Camera Stream" />
+                <div class="loading-indicator">Loading camera stream...</div>
+                <img src="/video" alt="Camera Stream" onload="this.parentNode.querySelector('.loading-indicator').style.display='none';" onerror="this.style.display='none'; this.parentNode.querySelector('.loading-indicator').innerHTML='Failed to load camera stream <button class=\'retry-button\' onclick=\'retryStream(this, \\\"/video\\\")\'>Retry</button>';" />
             </div>
-            <div class="video-box">
+            <div class="video-box" id="depth-box">
                 <h2>Depth Map</h2>
-                <img src="/depth_video" alt="Depth Map" />
+                <div class="loading-indicator">Loading depth map...</div>
+                <img src="/depth_video" alt="Depth Map" onload="this.parentNode.querySelector('.loading-indicator').style.display='none';" onerror="this.style.display='none'; this.parentNode.querySelector('.loading-indicator').innerHTML='Failed to load depth map <button class=\'retry-button\' onclick=\'retryStream(this, \\\"/depth_video\\\")\'>Retry</button>';" />
             </div>
-            <div class="video-box">
+            <div class="video-box" id="grid-box">
                 <h2>Depth Grid</h2>
-                <img src="/depth_grid" alt="Depth Grid" />
+                <div class="loading-indicator">Loading depth grid...</div>
+                <img src="/depth_grid" alt="Depth Grid" onload="this.parentNode.querySelector('.loading-indicator').style.display='none';" onerror="this.style.display='none'; this.parentNode.querySelector('.loading-indicator').innerHTML='Failed to load depth grid <button class=\'retry-button\' onclick=\'retryStream(this, \\\"/depth_grid\\\")\'>Retry</button>';" />
             </div>
-            <div class="video-box">
+            <div class="video-box" id="topdown-box">
                 <h2>Top-Down View</h2>
-                <img src="/top_down_view" alt="Top-Down View" />
+                <div class="loading-indicator">Loading top-down view...</div>
+                <img src="/top_down_view" alt="Top-Down View" onload="this.parentNode.querySelector('.loading-indicator').style.display='none';" onerror="this.style.display='none'; this.parentNode.querySelector('.loading-indicator').innerHTML='Failed to load top-down view <button class=\'retry-button\' onclick=\'retryStream(this, \\\"/top_down_view\\\")\'>Retry</button>';" />
             </div>
         </div>
         <div class="stats">
@@ -432,6 +466,28 @@ async def index():
         </div>
         
         <script>
+            // ストリームの再試行関数
+            function retryStream(button, streamUrl) {
+                const box = button.closest('.video-box');
+                const loadingIndicator = box.querySelector('.loading-indicator');
+                loadingIndicator.innerHTML = 'Reconnecting...';
+                
+                const img = box.querySelector('img') || document.createElement('img');
+                img.style.display = 'block';
+                img.src = streamUrl + '?retry=' + new Date().getTime(); // キャッシュ回避のためのクエリパラメータ
+                img.onload = function() {
+                    loadingIndicator.style.display = 'none';
+                };
+                img.onerror = function() {
+                    img.style.display = 'none';
+                    loadingIndicator.innerHTML = 'Failed to load stream <button class="retry-button" onclick="retryStream(this, \'' + streamUrl + '\')">Retry</button>';
+                };
+                
+                if (!box.contains(img)) {
+                    box.appendChild(img);
+                }
+            }
+
             // 2秒ごとに統計情報を更新
             setInterval(async () => {
                 try {
@@ -585,6 +641,7 @@ def get_top_down_view_stream():
                         print(f"[TopDownStream] Point cloud range - X: {x_min:.2f} to {x_max:.2f}m, Y: {y_min:.2f} to {y_max:.2f}m, Z: {z_min:.2f} to {z_max:.2f}m")
                     
                     # 占有グリッド生成
+                    print(f"[TopDownStream] Creating occupancy grid: resolution={grid_resolution}m, size={grid_width}x{grid_height}")
                     occupancy_grid = create_top_down_occupancy_grid(
                         point_cloud, 
                         grid_resolution=grid_resolution,
@@ -594,9 +651,14 @@ def get_top_down_view_stream():
                     
                     # 占有グリッドの視覚化
                     if occupancy_grid is not None:
+                        print(f"[TopDownStream] Occupancy grid created with shape: {occupancy_grid.shape}")
+                        unique_values = np.unique(occupancy_grid)
+                        print(f"[TopDownStream] Grid values: {unique_values}")
+                        
                         vis_img = visualize_occupancy_grid(occupancy_grid, scale_factor=3)
                         print(f"[TopDownStream] Occupancy grid visualized: {vis_img.shape}")
                     else:
+                        print("[TopDownStream] Failed to create occupancy grid")
                         vis_img = create_default_depth_image(width=320, height=240, text="Invalid Grid")
                 
                 # リサイズとフォーマット調整
