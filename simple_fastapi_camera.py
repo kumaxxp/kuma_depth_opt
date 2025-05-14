@@ -14,25 +14,25 @@ from depth_processor.visualization import create_default_depth_image
 # 天頂視点マップ用の関数をインポート
 from depth_processor import convert_to_absolute_depth, depth_to_point_cloud, create_top_down_occupancy_grid, visualize_occupancy_grid
 
-# FastAPIのライフサイクル管理を最新のasynccontextmanagerに変更
+# FastAPI lifecycle management using asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """アプリケーションのライフサイクル管理"""
-    # 起動時の処理
-    print("アプリケーション起動: カメラとスレッドを初期化します")
-    # スレッドは既にグローバルで開始されているので、ここでは何もしない
+    """Application lifecycle management"""
+    # Startup processes
+    print("Application startup: Initializing camera and threads")
+    # Threads are already started globally, so nothing to do here
     
-    yield  # アプリケーション実行中
+    yield  # During application runtime
     
-    # 終了時の処理
-    print("アプリケーション終了: リソースを解放します")
+    # Shutdown processes
+    print("Application shutdown: Releasing resources")
     try:
-        # カメラのクリーンアップ
+        # Camera cleanup
         if cap is not None:
             cap.release()
-            print("カメラリソースを解放しました")
+            print("Camera resources released")
     except Exception as e:
-        print(f"終了処理中のエラー: {e}")
+        print(f"Error during shutdown: {e}")
 
 # FastAPIアプリケーションをlifespanコンテキストマネージャーで初期化
 app = FastAPI(lifespan=lifespan)
@@ -42,13 +42,13 @@ cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'YUYV'))
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
-# カメラバッファ設定とエラー処理を追加
-cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # バッファサイズを最小に
-cap.set(cv2.CAP_PROP_FPS, 30)        # カメラのFPS設定
+# Set camera buffer and error handling
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffer size
+cap.set(cv2.CAP_PROP_FPS, 30)        # Set camera FPS
 
-# カメラの接続状態を確認
+# Check camera connection status
 if not cap.isOpened():
-    print("エラー: カメラに接続できません")
+    print("ERROR: Could not connect to camera")
     import sys
     sys.exit(1)
 else:

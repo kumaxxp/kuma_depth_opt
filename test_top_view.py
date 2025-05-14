@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-圧縮深度データからトップダウンビューを生成するテストプログラム
-CSVファイルから深度データを読み込み、グリッド表示とトップダウンビューを生成して表示します
+Test program for top-down view generation from compressed depth data
+Loads depth data from CSV files and generates grid display and top-down view
 """
 
 import os
@@ -13,44 +13,44 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import time
 
-# 日本語フォント対応のため追加
-from fix_text_encoding import setup_matplotlib_ja
+# Import English text utilities
+from english_text_utils import setup_matplotlib_english
 
-# 自作モジュールをインポート
+# Import custom modules
 from depth_processor import convert_to_absolute_depth, depth_to_point_cloud
 from depth_processor import create_top_down_occupancy_grid, visualize_occupancy_grid
 from depth_processor.visualization import create_depth_grid_visualization, create_default_depth_image
 
-# 日本語フォントの設定
-setup_matplotlib_ja()
+# Configure matplotlib for English text
+setup_matplotlib_english()
 
 def load_depth_grid_from_csv(csv_path):
     """
-    CSVファイルから圧縮された深度グリッドデータを読み込む
+    Load compressed depth grid data from CSV file
     
     Args:
-        csv_path: CSVファイルのパス
+        csv_path: Path to the CSV file
         
     Returns:
-        numpy.ndarray: 読み込まれた深度グリッドデータ
+        numpy.ndarray: Loaded depth grid data
     """
     try:
-        print(f"CSVファイルを読み込み中: {csv_path}")
+        print(f"Loading CSV file: {csv_path}")
         depth_grid = np.loadtxt(csv_path, delimiter=',')
-        print(f"読み込み成功: 形状 {depth_grid.shape}")
+        print(f"Successfully loaded: shape {depth_grid.shape}")
         return depth_grid
     except Exception as e:
-        print(f"CSVファイルの読み込みに失敗しました: {e}")
+        print(f"Failed to load CSV file: {e}")
         return None
 
 def save_test_csv(file_path, rows=12, cols=16):
     """
-    テスト用のCSVファイルを生成する関数（実際のデータがない場合用）
+    Generate a test CSV file (for cases where real data is not available)
     
     Args:
-        file_path: 保存先のパス
-        rows: 行数 (デフォルト=12)
-        cols: 列数 (デフォルト=16)
+        file_path: Path to save the file
+        rows: Number of rows (default=12)
+        cols: Number of columns (default=16)
     """
     # テスト用の深度データを生成（中心に近いほど値が小さい=近い）
     y, x = np.ogrid[:rows, :cols]
@@ -72,31 +72,30 @@ def save_test_csv(file_path, rows=12, cols=16):
     # 一部に無効値（0）を設定
     invalid_mask = (x > 3 * cols // 4) & (y > 3 * rows // 4)
     depth_grid[invalid_mask] = 0
-    
-    # CSVファイルとして保存
+      # Save as CSV file
     try:
         np.savetxt(file_path, depth_grid, delimiter=',', fmt='%.4f')
-        print(f"テスト用CSVファイルを生成しました: {file_path}")
+        print(f"Generated test CSV file: {file_path}")
         return True
     except Exception as e:
-        print(f"CSVファイルの生成に失敗しました: {e}")
+        print(f"Failed to generate CSV file: {e}")
         return False
 
 def process_depth_grid(depth_grid, save_dir=None):
     """
-    圧縮深度グリッドからトップダウンビューを生成して表示する
+    Generate a top-down view from compressed depth grid and display it
     
     Args:
-        depth_grid: 深度グリッドデータ
-        save_dir: 結果を保存するディレクトリ（Noneの場合は保存しない）
+        depth_grid: Depth grid data
+        save_dir: Directory to save results (None if not saving)
     """
     if depth_grid is None:
-        print("有効な深度グリッドがありません")
+        print("No valid depth grid available")
         return False
     
-    # パラメータ設定
+    # Parameter setup
     grid_rows, grid_cols = depth_grid.shape
-    print(f"深度グリッドサイズ: {grid_rows}x{grid_cols}")
+    print(f"Depth grid size: {grid_rows}x{grid_cols}")
     
     # 圧縮データ用のパラメータ
     scaling_factor = 10.0  # 深度スケーリング係数
@@ -110,18 +109,17 @@ def process_depth_grid(depth_grid, save_dir=None):
     fy = 309.0 / 12 * grid_rows * 0.8
     cx = grid_cols / 2.0
     cy = grid_rows / 2.0
-    
-    # 1. 深度グリッドの可視化（単純に色で深度を表現）
-    print("1. 深度グリッドを可視化しています...")
+      # 1. Visualize depth grid (simply represent depth with color)
+    print("1. Visualizing depth grid...")
     grid_vis = create_depth_grid_visualization(depth_grid, cell_size=30)
     
-    # 2. 絶対深度に変換
-    print("2. 絶対深度に変換しています...")
+    # 2. Convert to absolute depth
+    print("2. Converting to absolute depth...")
     absolute_depth = convert_to_absolute_depth(depth_grid, scaling_factor, is_compressed_grid=True)
-    print(f"   絶対深度の範囲: {np.min(absolute_depth):.2f}m - {np.max(absolute_depth):.2f}m")
+    print(f"   Absolute depth range: {np.min(absolute_depth):.2f}m - {np.max(absolute_depth):.2f}m")
     
-    # 3. 点群生成
-    print("3. 点群を生成しています...")
+    # 3. Generate point cloud
+    print("3. Generating point cloud...")
     point_cloud = depth_to_point_cloud(
         absolute_depth,
         fx=fx,
@@ -132,25 +130,24 @@ def process_depth_grid(depth_grid, save_dir=None):
         grid_rows=grid_rows,
         grid_cols=grid_cols
     )
-    
-    if point_cloud is None or point_cloud.size == 0:
-        print("点群の生成に失敗しました")
+      if point_cloud is None or point_cloud.size == 0:
+        print("Failed to generate point cloud")
         return False
     
-    print(f"   生成された点群: {point_cloud.shape[0]}点")
+    print(f"   Generated point cloud: {point_cloud.shape[0]} points")
     
-    # 点群の統計情報
+    # Point cloud statistics
     x_min, x_max = np.min(point_cloud[:, 0]), np.max(point_cloud[:, 0])
     y_min, y_max = np.min(point_cloud[:, 1]), np.max(point_cloud[:, 1])
     z_min, z_max = np.min(point_cloud[:, 2]), np.max(point_cloud[:, 2])
-    print(f"   点群の範囲 - X: {x_min:.2f}m - {x_max:.2f}m, Y: {y_min:.2f}m - {y_max:.2f}m, Z: {z_min:.2f}m - {z_max:.2f}m")
+    print(f"   Point cloud range - X: {x_min:.2f}m - {x_max:.2f}m, Y: {y_min:.2f}m - {y_max:.2f}m, Z: {z_min:.2f}m - {z_max:.2f}m")
     
-    # Y値（高さ）の分布
+    # Y value (height) distribution
     y_percentiles = np.percentile(point_cloud[:, 1], [5, 25, 50, 75, 95])
-    print(f"   高さ（Y）パーセンタイル [5,25,50,75,95]: {y_percentiles}")
+    print(f"   Height (Y) percentiles [5,25,50,75,95]: {y_percentiles}")
     
-    # 4. 占有グリッド生成
-    print("4. 占有グリッドを生成しています...")
+    # 4. Generate occupancy grid
+    print("4. Creating occupancy grid...")
     occupancy_grid = create_top_down_occupancy_grid(
         point_cloud,
         grid_resolution=grid_resolution,

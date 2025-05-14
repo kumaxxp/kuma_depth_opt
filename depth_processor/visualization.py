@@ -1,27 +1,30 @@
 """
-深度マップの可視化関連機能
+Depth map visualization functions
 """
 
 import cv2
 import numpy as np
 import logging
 
-# ロガーの取得
+# Import English text utilities
+from english_text_utils import setup_matplotlib_english, cv2_put_english_text
+
+# Get logger
 logger = logging.getLogger("kuma_depth_opt.visualization")
-# --- ここから追加 ---
-# logger のレベルを DEBUG に設定
+# --- Start of addition ---
+# Set logger level to DEBUG
 logger.setLevel(logging.DEBUG)
-# ハンドラが設定されていなければ、標準出力へのハンドラを追加
+# Add handler to standard output if no handlers are set
 if not logger.hasHandlers():
     handler = logging.StreamHandler()
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 logger.info("Logger for 'kuma_depth_opt.visualization' INITIALIZED. This message should appear if the module is imported and logger is working.")
-# --- ここまで追加 ---
+# --- End of addition ---
 
 def create_depth_visualization(depth_map, original_shape, add_colorbar=True):
-    """深度マップの可視化を行う"""
+    """Visualize depth map"""
     try:
         if depth_map is None or depth_map.size == 0:
             logger.warning("Empty depth map received for visualization")
@@ -30,19 +33,19 @@ def create_depth_visualization(depth_map, original_shape, add_colorbar=True):
                 480 if original_shape is None else original_shape[0]
             )
             
-        # 深度マップの形状をログ出力
+        # Log depth map shape
         logger.debug(f"Visualizing depth map with shape: {depth_map.shape}")
         
-        # 深度マップを2次元に変換
-        if len(depth_map.shape) == 4:  # (1, H, W, 1) 形式
+        # Convert depth map to 2D
+        if len(depth_map.shape) == 4:  # (1, H, W, 1) format
             depth_feature = depth_map.reshape(depth_map.shape[1:3])
-        elif len(depth_map.shape) == 3:  # (H, W, 1) または (1, H, W) 形式
+        elif len(depth_map.shape) == 3:  # (H, W, 1) or (1, H, W) format
             if depth_map.shape[2] == 1:
                 depth_feature = depth_map.reshape(depth_map.shape[:2])
             else:
                 depth_feature = depth_map.reshape(depth_map.shape[1:])
         else:
-            depth_feature = depth_map  # すでに2D
+            depth_feature = depth_map  # already 2D
             
         # NaNやInfをチェックして置換
         depth_feature = np.nan_to_num(depth_feature, nan=0.5, posinf=1.0, neginf=0.1)

@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-トップダウンビュー生成のパラメータ比較テストプログラム
-同じ深度データに対して異なるパラメータでトップダウンビューを生成し、結果を比較します
+Parameter comparison test program for top-down view generation
+Generates top-down views with different parameters for the same depth data and compares results
 """
 
 import os
@@ -13,38 +13,38 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import time
 
-# 日本語フォント対応のため追加
-from fix_text_encoding import setup_matplotlib_ja
+# Import English text utilities
+from english_text_utils import setup_matplotlib_english
 
-# 自作モジュールをインポート
+# Import custom modules
 from depth_processor import convert_to_absolute_depth, depth_to_point_cloud
 from depth_processor import create_top_down_occupancy_grid, visualize_occupancy_grid
 from depth_processor.visualization import create_depth_grid_visualization
 
-# 日本語フォントの設定
-setup_matplotlib_ja()
+# Configure matplotlib for English text
+setup_matplotlib_english()
 
 def load_depth_grid_from_csv(csv_path):
-    """CSVファイルから圧縮深度グリッドを読み込む"""
+    """Load compressed depth grid from CSV file"""
     try:
-        print(f"CSVファイルを読み込み中: {csv_path}")
+        print(f"Loading CSV file: {csv_path}")
         depth_grid = np.loadtxt(csv_path, delimiter=',')
-        print(f"読み込み成功: 形状 {depth_grid.shape}")
+        print(f"Successfully loaded: shape {depth_grid.shape}")
         return depth_grid
     except Exception as e:
-        print(f"CSVファイルの読み込みに失敗しました: {e}")
+        print(f"Failed to load CSV file: {e}")
         return None
 
 def generate_point_cloud(depth_grid, scaling_factor=10.0):
     """
-    深度グリッドから点群を生成
+    Generate point cloud from depth grid
     
     Args:
-        depth_grid: 深度グリッドデータ
-        scaling_factor: 深度スケーリング係数
+        depth_grid: Depth grid data
+        scaling_factor: Depth scaling factor
         
     Returns:
-        tuple: (点群, 絶対深度グリッド)
+        tuple: (point_cloud, absolute_depth_grid)
     """
     grid_rows, grid_cols = depth_grid.shape
     
@@ -73,52 +73,50 @@ def generate_point_cloud(depth_grid, scaling_factor=10.0):
 
 def compare_parameters(csv_path, save_dir=None):
     """
-    異なるパラメータでトップダウンビューを生成して比較
+    Generate top-down views with different parameters and compare results
     
     Args:
-        csv_path: CSVファイルのパス
-        save_dir: 結果保存先ディレクトリ
+        csv_path: Path to CSV file
+        save_dir: Directory to save results
     """
-    # CSVファイルを読み込む
+    # Load CSV file
     depth_grid = load_depth_grid_from_csv(csv_path)
     if depth_grid is None:
         return False
     
-    # 点群を生成
+    # Generate point cloud
     point_cloud, absolute_depth = generate_point_cloud(depth_grid)
     if point_cloud is None or point_cloud.size == 0:
-        print("点群の生成に失敗しました")
+        print("Failed to generate point cloud")
         return False
     
-    print(f"点群生成: {point_cloud.shape[0]}点")
+    print(f"Point cloud generated: {point_cloud.shape[0]} points")
     
-    # 点群の統計情報
+    # Point cloud statistics
     x_min, x_max = np.min(point_cloud[:, 0]), np.max(point_cloud[:, 0])
     y_min, y_max = np.min(point_cloud[:, 1]), np.max(point_cloud[:, 1])
     z_min, z_max = np.min(point_cloud[:, 2]), np.max(point_cloud[:, 2])
-    print(f"点群の範囲 - X: {x_min:.2f}m - {x_max:.2f}m, Y: {y_min:.2f}m - {y_max:.2f}m, Z: {z_min:.2f}m - {z_max:.2f}m")
+    print(f"Point cloud range - X: {x_min:.2f}m - {x_max:.2f}m, Y: {y_min:.2f}m - {y_max:.2f}m, Z: {z_min:.2f}m - {z_max:.2f}m")
     
-    # Y値（高さ）の分布
+    # Height distribution
     y_percentiles = np.percentile(point_cloud[:, 1], [5, 25, 50, 75, 95])
-    print(f"高さ（Y）パーセンタイル [5,25,50,75,95]: {y_percentiles}")
-    
-    # パラメータバリエーション
-    grid_resolutions = [0.05, 0.1, 0.2]  # メートル/セル
-    height_thresholds = [0.1, 0.2, 0.3]  # メートル
-    
-    # 結果を格納する辞書
+    print(f"Height (Y) percentiles [5,25,50,75,95]: {y_percentiles}")
+      # Parameter variations
+    grid_resolutions = [0.05, 0.1, 0.2]  # meters/cell
+    height_thresholds = [0.1, 0.2, 0.3]  # meters
+      # Dictionary to store results
     results = {}
     
-    # 深度グリッド可視化（参照用）
+    # Depth grid visualization (for reference)
     grid_vis = create_depth_grid_visualization(depth_grid, cell_size=30)
     
-    # すべてのパラメータの組み合わせをテスト
+    # Test all parameter combinations
     for res in grid_resolutions:
         for thresh in height_thresholds:
-            print(f"テスト: 解像度={res}m/セル, 高さ閾値={thresh}m")
+            print(f"Test: resolution={res}m/cell, height threshold={thresh}m")
             
-            # グリッドサイズを解像度に応じて調整
-            grid_size = int(4.0 / res)  # 4mの範囲をカバー
+            # Adjust grid size based on resolution
+            grid_size = int(4.0 / res)  # Cover a range of 4m
             grid_width = grid_height = grid_size
             
             # 占有グリッドを生成

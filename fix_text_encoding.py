@@ -26,6 +26,12 @@ def setup_matplotlib_ja():
         'axes.unicode_minus': False  # Ensure minus signs display correctly
     })
     
+    # 日本語フォントの候補リスト
+    ja_font_names = [
+        'Yu Gothic', 'Meiryo', 'MS Gothic', 'Hiragino Kaku Gothic ProN',
+        'TakaoGothic', 'Noto Sans CJK JP', 'IPAPGothic', 'VL Gothic'
+    ]
+    
     # フォントファミリーを探す
     font_found = False
     for font_name in ja_font_names:
