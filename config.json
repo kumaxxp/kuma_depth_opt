@@ -24,7 +24,7 @@
   },
   "logging": {
     "level": "INFO",
-    "file": "logs/kuma_depth_nav.log",
+    "file": "logs/kuma_depth_opt.log",
     "rotation": "1 day"
   },
   "performance": {

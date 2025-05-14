@@ -93,7 +93,7 @@ def load_config(config_path: str = "config.json") -> Dict[str, Any]:
         },
         "logging": {
             "level": "INFO",
-            "file": "logs/kuma_depth_nav.log"
+            "file": "logs/kuma_depth_opt.log"
         }
     }
     

@@ -151,6 +151,11 @@ threading.Thread(target=log_processing_times, daemon=True).start()
 # 推論専用の関数を追加
 def inference_thread():
     global latest_depth_map, last_inference_time, latest_depth_grid # ★ latest_depth_grid をグローバル変数として追加
+    
+    # 設定値確認用デバッグ出力
+    print(f"[Thread] GRID_COMPRESSION_SIZE: {GRID_COMPRESSION_SIZE}")
+    print(f"[Thread] Camera Parameters: FX={FX}, FY={FY}, CX={CX}, CY={CY}")
+    
     while True:
         current_time = time.time()
         if current_time - last_inference_time > INFERENCE_INTERVAL:
@@ -415,57 +420,9 @@ async def depth_grid():
 
 @app.get("/top_down_view")
 async def top_down_view():
+    print("[API] Top-Down View endpoint called")
     return StreamingResponse(get_top_down_view_stream(), media_type="multipart/x-mixed-replace; boundary=frame")
 
-def get_camera_stream():
-    # ストリーム開始時のタイムスタンプをリセット
-    last_frame_times["camera"] = 0
-    fps_stats["camera"].clear()  # FPS統計をクリア
-    first_frame = True  # 最初のフレームかどうかを追跡
-    
-    while True:
-        # 共有メモリからカメラフレームを取得
-        with depth_map_lock:
-            if latest_camera_frame is None:
-                time.sleep(0.01)
-                continue
-            frame = latest_camera_frame.copy()
-        
-        # FPS計算 - 改善版
-        now = time.time()
-        if first_frame:
-            # 最初のフレームはFPS計算をスキップ、タイムスタンプのみ記録
-            first_frame = False
-        elif (now - last_frame_times["camera"]) < 0.5:  # 0.5秒以内の正常な間隔
-            # 正常な間隔の場合のみFPSを計算
-            fps = 1.0 / (now - last_frame_times["camera"])
-            # 異常値フィルタリング (FPSが200を超える値はエラーと見なす)
-            if fps < 200:  
-                fps_stats["camera"].append(fps)
-        
-        # 現在時刻を常に記録
-        last_frame_times["camera"] = now
-
-        # 画面上にFPS表示
-        if len(fps_stats["camera"]) > 0:
-            # 中央値を使用 (平均値より外れ値の影響を受けにくい)
-            camera_fps_values = list(fps_stats["camera"])
-            camera_fps_values.sort()
-            median_fps = camera_fps_values[len(camera_fps_values) // 2]
-            cv2.putText(frame, f"FPS: {median_fps:.1f}", (10, 30), 
-                      cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-        # エンコーディング
-        start_time = time.perf_counter()
-        ret, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
-        encoding_times.append(time.perf_counter() - start_time)
-        if not ret:
-            continue
-
-        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-        time.sleep(0.05)  # 20FPSに制限（0.02→0.05に変更）
-
-# 天頂視点マップ用のストリーム取得関数を追加
 def get_top_down_view_stream():
     """天頂視点マップのストリームを提供する関数"""
     # パフォーマンス測定用
@@ -473,60 +430,78 @@ def get_top_down_view_stream():
     fps_stats["top_down"] = deque(maxlen=30)
     first_frame = True
     
+    print("[TopDownStream] Top-down view stream started")
+    
+    # キープアライブフレームを初期化(何もデータがない場合でも表示するため)
+    no_data_image = create_default_depth_image(width=320, height=240, text="Top-Down View: Waiting for data...")
+    no_data_buffer = None
+    try:
+        ret, no_data_buffer = cv2.imencode('.jpg', no_data_image, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+    except Exception as e:
+        print(f"[TopDownStream] Warning: Failed to create keep-alive frame: {e}")
+    
     # 設定パラメータ
-    scaling_factor = 15.0  # ★ 深度スケーリング係数を再度有効化
+    scaling_factor = 15.0  # 深度スケーリング係数
     grid_resolution = 0.1  # グリッドの解像度（メートル/セル）
     grid_width = 100       # グリッドの幅（セル数）
     grid_height = 100      # グリッドの高さ（セル数）
     height_threshold = 0.3 # 通行可能と判定する高さの閾値（メートル）
     
+    # グローバル変数の状態確認
+    print("[TopDownStream] グローバル変数状態チェック:")
+    print(f"[TopDownStream] GRID_COMPRESSION_SIZE: {GRID_COMPRESSION_SIZE}")
+    print(f"[TopDownStream] Camera Parameters: FX={FX}, FY={FY}, CX={CX}, CY={CY}")
+    print(f"[TopDownStream] ORIGINAL_DEPTH_HEIGHT: {ORIGINAL_DEPTH_HEIGHT}, ORIGINAL_DEPTH_WIDTH: {ORIGINAL_DEPTH_WIDTH}")
+    
     # エラーカウンター
     error_count = 0
     last_error_time = 0
     
+    # キープアライブフレームを最初に送信
+    if no_data_buffer is not None:
+        print("[TopDownStream] Sending initial keep-alive frame")
+        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + no_data_buffer.tobytes() + b'\r\n')
+    
+    # メインループ
     while True:
         current_grid_data = None
-        current_raw_depth_map = None # ★ 元の深度マップも取得するため追加
+        current_raw_depth_map = None
 
-        with depth_map_lock:
-            if latest_depth_grid is not None:
-                current_grid_data = latest_depth_grid.copy()
-            if latest_depth_map is not None: # ★ 元の深度マップも取得
-                current_raw_depth_map = latest_depth_map.copy()
-        
-        if current_grid_data is None or current_raw_depth_map is None:
-            # デバッグ情報を表示するのは時々のみに
-            current_time = time.time()
-            if current_time - last_error_time > 5:  # 5秒ごとに表示
-                print("[TopDownStream] Waiting for grid or raw depth map...")
-                last_error_time = current_time
-            time.sleep(0.1)  # 待機時間を長めに
-            
-            # "No Data" 画像を生成して送信
-            error_count += 1
-            if error_count > 10:  # データがない状態が続いたら
-                vis_img = create_default_depth_image(width=320, height=240, text="Top-Down View: No Data")
-                ret, buffer = cv2.imencode('.jpg', vis_img, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
-                if ret:
-                    yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-                error_count = 0  # リセット
-            continue
-        
         try:
-            start_time_vis = time.perf_counter()
-
-            # 圧縮グリッドデータを絶対深度に変換
-            original_height, original_width = current_raw_depth_map.shape[:2]
-
-            # エラーハンドリングを追加した convert_to_absolute_depth 関数を使用
-            absolute_depth_grid = convert_to_absolute_depth(
-                current_grid_data, 
-                scaling_factor=15.0,
-                depth_scale=1.0
-            )
+            with depth_map_lock:
+                if latest_depth_grid is not None:
+                    current_grid_data = latest_depth_grid.copy()
+                if latest_depth_map is not None:
+                    current_raw_depth_map = latest_depth_map.copy()
             
-            # 点群生成 (圧縮グリッドから)
+            if current_grid_data is None or current_raw_depth_map is None:
+                # データがない場合は待機して「No Data」画像を送信
+                current_time = time.time()
+                if current_time - last_error_time > 5:  # 5秒ごとにログ出力
+                    print("[TopDownStream] Waiting for depth data...")
+                    last_error_time = current_time
+                
+                # データがない状態が続いたらキープアライブフレームを送信
+                error_count += 1
+                if error_count > 5 and no_data_buffer is not None:
+                    yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + no_data_buffer.tobytes() + b'\r\n')
+                    error_count = 0  # カウンターリセット
+                
+                time.sleep(0.1)  # 待機時間
+                continue
+            
+            # ここからデータ処理開始
+            start_time_vis = time.perf_counter()
+            
             try:
+                # 圧縮グリッドデータを絶対深度に変換
+                original_height, original_width = current_raw_depth_map.shape[:2]
+                print(f"[TopDownStream] Processing depth data: grid={current_grid_data.shape}, raw={current_raw_depth_map.shape}")
+                
+                # 絶対深度へ変換
+                absolute_depth_grid = convert_to_absolute_depth(current_grid_data, scaling_factor=scaling_factor)
+                
+                # 点群生成
                 point_cloud = depth_to_point_cloud(
                     absolute_depth_grid,
                     fx=FX, fy=FY, cx=CX, cy=CY,
@@ -536,103 +511,82 @@ def get_top_down_view_stream():
                     grid_rows=GRID_COMPRESSION_SIZE[0],
                     grid_cols=GRID_COMPRESSION_SIZE[1]
                 )
-            except Exception as e:
-                print(f"[TopDownStream] Error in depth_to_point_cloud: {str(e)}")
-                point_cloud = None
                 
-            error_count = 0  # リセット（正常に処理できた）
-                
-        except Exception as e:
-            print(f"[TopDownStream] Error processing depth data: {str(e)}")
-            point_cloud = None
-
-
-        if point_cloud is None or point_cloud.size == 0:
-            # ポイントクラウドが生成できない場合はデフォルト画像を表示
-            vis_img = create_default_depth_image(width=320, height=240, text="Top-Down View: Processing...")
-        else:
-            try:
-                # 占有グリッド生成
-                occupancy_grid = create_top_down_occupancy_grid(
-                    point_cloud,
-                    grid_resolution=0.1, # 10cm per cell
-                    grid_width=100,      # グリッド幅（セル数）
-                    grid_height=100      # グリッド高さ（セル数）
-                )
-                
-                if occupancy_grid is not None and occupancy_grid.size > 0:
-                    # 占有グリッド視覚化（スケールファクターを適用）
-                    vis_img = visualize_occupancy_grid(occupancy_grid, scale_factor=3)
+                # 点群から占有グリッド生成
+                if point_cloud is None or point_cloud.size == 0:
+                    print("[TopDownStream] No valid points in point cloud")
+                    vis_img = create_default_depth_image(width=320, height=240, text="No Valid Point Cloud")
                 else:
-                    vis_img = create_default_depth_image(width=320, height=240, text="Top-Down View: Invalid Grid")
+                    print(f"[TopDownStream] Generated point cloud with {point_cloud.shape[0]} points")
+                    
+                    # 占有グリッド生成
+                    occupancy_grid = create_top_down_occupancy_grid(
+                        point_cloud, 
+                        grid_resolution=grid_resolution,
+                        grid_width=grid_width,
+                        grid_height=grid_height
+                    )
+                    
+                    # 占有グリッドの視覚化
+                    if occupancy_grid is not None:
+                        vis_img = visualize_occupancy_grid(occupancy_grid, scale_factor=3)
+                        print(f"[TopDownStream] Occupancy grid visualized: {vis_img.shape}")
+                    else:
+                        vis_img = create_default_depth_image(width=320, height=240, text="Invalid Grid")
+                
+                # リサイズとフォーマット調整
+                vis_img = cv2.resize(vis_img, (320, 240), interpolation=cv2.INTER_NEAREST)
+                if len(vis_img.shape) == 2:
+                    vis_img = cv2.cvtColor(vis_img, cv2.COLOR_GRAY2BGR)
+                
+                # 成功したのでエラーカウンターをリセット
+                error_count = 0
+                
             except Exception as e:
-                print(f"[TopDownStream] Error creating occupancy grid: {str(e)}")
-                vis_img = create_default_depth_image(width=320, height=240, text="Top-Down View: Error")
-
-
-        if vis_img is None or len(vis_img.shape) < 2:
-            print("[TopDownStream] vis_img is invalid, creating default.") # DEBUG
-            vis_img = create_default_depth_image(width=320, height=240)
-        elif len(vis_img.shape) == 2 or (len(vis_img.shape) == 3 and vis_img.shape[2] == 1):
-            vis_img = cv2.cvtColor(vis_img, cv2.COLOR_GRAY2BGR)
+                print(f"[TopDownStream] Error in processing: {e}")
+                import traceback
+                print(traceback.format_exc())
+                vis_img = create_default_depth_image(width=320, height=240, text=f"Error: {str(e)[:20]}")
+            
+            # FPS計算
+            visualization_times.append(time.perf_counter() - start_time_vis)
+            now = time.time()
+            if last_frame_times.get("top_down", 0) > 0:
+                fps = 1.0 / (now - last_frame_times["top_down"])
+                fps_stats["top_down"].append(fps)
+            last_frame_times["top_down"] = now
+            
+            # テキストオーバーレイ
+            if len(fps_stats["top_down"]) > 0:
+                avg_fps = sum(fps_stats["top_down"]) / len(fps_stats["top_down"])
+                cv2.putText(vis_img, f"FPS: {avg_fps:.1f}", (10, 20), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                
+                with depth_map_lock:
+                    delay = (time.time() - frame_timestamp) * 1000 if frame_timestamp > 0 else 0
+                cv2.putText(vis_img, f"Delay: {delay:.1f}ms", (10, 40), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            
+            # JPEG エンコード
+            ret, buffer = cv2.imencode('.jpg', vis_img, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+            if not ret:
+                print("[TopDownStream] Failed to encode image")
+                continue
+            
+            # フレーム送信
+            yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+            
+        except Exception as e:
+            print(f"[TopDownStream] Unhandled error: {e}")
+            import traceback
+            print(traceback.format_exc())
+            
+            # エラー時にもキープアライブフレームを送信
+            if no_data_buffer is not None:
+                yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + no_data_buffer.tobytes() + b'\r\n')
         
-        # 元のサイズに戻す (例: 320x240)
-        # visualize_occupancy_grid が返す画像のサイズは (grid_h * scale, grid_w * scale, 3)
-        # これを固定サイズにリサイズする
-        target_width = 320
-        target_height = 240
-        current_height, current_width = vis_img.shape[:2]
-
-        if current_height != target_height or current_width != target_width:
-            # アスペクト比を保ちつつリサイズし、中央に配置
-            aspect_ratio_vis = current_width / current_height
-            aspect_ratio_target = target_width / target_height
-
-            if aspect_ratio_vis > aspect_ratio_target: # 横長の画像をターゲットに合わせる
-                new_width = target_width
-                new_height = int(target_width / aspect_ratio_vis)
-            else: # 縦長の画像をターゲットに合わせる
-                new_height = target_height
-                new_width = int(target_height * aspect_ratio_vis)
-            
-            resized_vis = cv2.resize(vis_img, (new_width, new_height), interpolation=cv2.INTER_NEAREST)
-            
-            # 黒い背景を作成し、中央に配置
-            final_vis_img = np.zeros((target_height, target_width, 3), dtype=np.uint8)
-            x_offset = (target_width - new_width) // 2
-            y_offset = (target_height - new_height) // 2
-            final_vis_img[y_offset:y_offset+new_height, x_offset:x_offset+new_width] = resized_vis
-            vis_img = final_vis_img
-        
-        visualization_times.append(time.perf_counter() - start_time_vis)
-
-        # FPS計算とテキスト表示
-        now = time.time()
-        if last_frame_times.get("top_down", 0) > 0: # last_frame_times に "top_down" がなければ初期化
-            fps = 1.0 / (now - last_frame_times["top_down"])
-            fps_stats["top_down"].append(fps)
-        last_frame_times["top_down"] = now
-
-        if len(fps_stats["top_down"]) > 0:
-            avg_fps = sum(fps_stats["top_down"]) / len(fps_stats["top_down"])
-            cv2.putText(vis_img, f"FPS: {avg_fps:.1f}", (10, 20), # Y座標を調整
-                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1) # フォントスケールと太さを調整
-            
-            with depth_map_lock: # 遅延表示のためにロックを取得
-                delay = (time.time() - frame_timestamp) * 1000 if frame_timestamp > 0 else 0
-            cv2.putText(vis_img, f"Delay: {delay:.1f}ms", (10, 40), # Y座標を調整
-                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1) # フォントスケールと太さを調整
-
-        # JPEG エンコード
-        start_time_encode = time.perf_counter()
-        ret, buffer = cv2.imencode('.jpg', vis_img, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
-        encoding_times.append(time.perf_counter() - start_time_encode)
-        if not ret:
-            continue
-
-        yield (b'--frame\\r\\nContent-Type: image/jpeg\\r\\n\\r\\n' + buffer.tobytes() + b'\\r\\n')
-        time.sleep(0.03) # 33 FPS 程度
-
+        # フレームレート制御
+        time.sleep(0.1)  # 10 FPS 程度に制限（Top-Down処理は重いため）
 # 例外ハンドリングを強化
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
