@@ -13,10 +13,16 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import time
 
+# 日本語フォント対応のため追加
+from fix_text_encoding import setup_matplotlib_ja
+
 # 自作モジュールをインポート
 from depth_processor import convert_to_absolute_depth, depth_to_point_cloud
 from depth_processor import create_top_down_occupancy_grid, visualize_occupancy_grid
 from depth_processor.visualization import create_depth_grid_visualization, create_default_depth_image
+
+# 日本語フォントの設定
+setup_matplotlib_ja()
 
 def load_depth_grid_from_csv(csv_path):
     """

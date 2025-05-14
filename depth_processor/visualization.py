@@ -122,46 +122,120 @@ def create_default_depth_image(width=640, height=480, text=None):
         max_text_width = int(width * 0.9)  # 画像幅の90%を最大幅とする
         font_face = cv2.FONT_HERSHEY_SIMPLEX
         
-        # テキストの分割が必要か確認
-        (text_width, text_height), baseline = cv2.getTextSize(text, font_face, font_scale, thickness)
+        # 日本語対応のためのチェック
+        has_japanese = any(ord(c) > 127 for c in text)
         
-        if text_width > max_text_width:
-            # 長いテキストは複数行に分割（単純に半分で区切る）
-            mid_point = len(text) // 2
-            # スペースがあればそこで分割
-            for i in range(mid_point, min(len(text), mid_point + 20)):
-                if text[i] == ' ':
-                    mid_point = i
-                    break
-            
-            text1 = text[:mid_point]
-            text2 = text[mid_point:].strip()
-            
-            (text1_width, text1_height), _ = cv2.getTextSize(text1, font_face, font_scale, thickness)
-            (text2_width, text2_height), _ = cv2.getTextSize(text2, font_face, font_scale, thickness)
-            
-            # 1行目のテキスト位置
-            text1_x = (width - text1_width) // 2
-            text1_y = (height // 2) - int(text1_height * 0.5)
-            
-            # 2行目のテキスト位置
-            text2_x = (width - text2_width) // 2
-            text2_y = (height // 2) + int(text2_height * 1.5)
-            
-            # テキスト描画
-            cv2.putText(default_depth_image, text1, (text1_x, text1_y), 
-                       font_face, font_scale, (255, 255, 255), thickness)
-            cv2.putText(default_depth_image, text2, (text2_x, text2_y), 
-                       font_face, font_scale, (255, 255, 255), thickness)
+        if has_japanese:
+            try:
+                # fix_text_encoding.pyのcv2_putText_ja関数を使用
+                from fix_text_encoding import cv2_putText_ja
+                
+                # テキストが長い場合は複数行に分割
+                if len(text) > width // 10:  # 簡易的な判断
+                    mid_point = len(text) // 2
+                    # スペースがあればそこで分割
+                    for i in range(mid_point, min(len(text), mid_point + 20)):
+                        if text[i] == ' ':
+                            mid_point = i
+                            break
+                    
+                    text1 = text[:mid_point]
+                    text2 = text[mid_point:].strip()
+                    
+                    # テキスト位置を計算
+                    text1_x = width // 2 - len(text1) * int(font_scale * 10) // 2
+                    text1_y = height // 2 - int(font_scale * 15)
+                    
+                    text2_x = width // 2 - len(text2) * int(font_scale * 10) // 2
+                    text2_y = height // 2 + int(font_scale * 25)
+                    
+                    # 各行を描画
+                    default_depth_image = cv2_putText_ja(default_depth_image, text1, (text1_x, text1_y), 
+                                                       font_face, font_scale, (255, 255, 255), thickness)
+                    default_depth_image = cv2_putText_ja(default_depth_image, text2, (text2_x, text2_y), 
+                                                       font_face, font_scale, (255, 255, 255), thickness)
+                else:
+                    # 1行で十分な場合
+                    text_x = width // 2 - len(text) * int(font_scale * 10) // 2
+                    text_y = height // 2 + int(font_scale * 10)
+                    
+                    default_depth_image = cv2_putText_ja(default_depth_image, text, (text_x, text_y), 
+                                                      font_face, font_scale, (255, 255, 255), thickness)
+                
+            except ImportError:
+                logger.warning("fix_text_encoding module not found. Japanese text may not display correctly.")
+                # 通常のcv2.putTextにフォールバック
+                # テキストの分割が必要か確認
+                (text_width, text_height), baseline = cv2.getTextSize(text, font_face, font_scale, thickness)
+                
+                if text_width > max_text_width:
+                    # 長いテキストを分割
+                    mid_point = len(text) // 2
+                    text1 = text[:mid_point]
+                    text2 = text[mid_point:].strip()
+                    
+                    (text1_width, text1_height), _ = cv2.getTextSize(text1, font_face, font_scale, thickness)
+                    
+                    # テキスト位置を計算して描画
+                    text1_x = (width - text1_width) // 2
+                    text1_y = (height // 2) - int(text1_height * 0.5)
+                    cv2.putText(default_depth_image, text1, (text1_x, text1_y), 
+                               font_face, font_scale, (255, 255, 255), thickness)
+                    
+                    # 2行目
+                    (text2_width, text2_height), _ = cv2.getTextSize(text2, font_face, font_scale, thickness)
+                    text2_x = (width - text2_width) // 2
+                    text2_y = (height // 2) + int(text2_height * 1.5)
+                    cv2.putText(default_depth_image, text2, (text2_x, text2_y), 
+                               font_face, font_scale, (255, 255, 255), thickness)
+                else:
+                    # 1行で十分な場合
+                    text_x = (width - text_width) // 2
+                    text_y = (height + text_height) // 2
+                    cv2.putText(default_depth_image, text, (text_x, text_y), 
+                               font_face, font_scale, (255, 255, 255), thickness)
         else:
-            # 1行で十分な場合
-            # テキストの位置を計算（中央配置）
-            text_x = (width - text_width) // 2
-            text_y = (height + text_height) // 2
+            # 非日本語文字の場合は通常のcv2.putTextを使用
+            # テキストの分割が必要か確認
+            (text_width, text_height), baseline = cv2.getTextSize(text, font_face, font_scale, thickness)
             
-            # テキストを描画
-            cv2.putText(default_depth_image, text, (text_x, text_y), 
-                       font_face, font_scale, (255, 255, 255), thickness)
+            if text_width > max_text_width:
+                # 長いテキストは複数行に分割（単純に半分で区切る）
+                mid_point = len(text) // 2
+                # スペースがあればそこで分割
+                for i in range(mid_point, min(len(text), mid_point + 20)):
+                    if text[i] == ' ':
+                        mid_point = i
+                        break
+                
+                text1 = text[:mid_point]
+                text2 = text[mid_point:].strip()
+                
+                (text1_width, text1_height), _ = cv2.getTextSize(text1, font_face, font_scale, thickness)
+                (text2_width, text2_height), _ = cv2.getTextSize(text2, font_face, font_scale, thickness)
+                
+                # 1行目のテキスト位置
+                text1_x = (width - text1_width) // 2
+                text1_y = (height // 2) - int(text1_height * 0.5)
+                
+                # 2行目のテキスト位置
+                text2_x = (width - text2_width) // 2
+                text2_y = (height // 2) + int(text2_height * 1.5)
+                
+                # テキスト描画
+                cv2.putText(default_depth_image, text1, (text1_x, text1_y), 
+                           font_face, font_scale, (255, 255, 255), thickness)
+                cv2.putText(default_depth_image, text2, (text2_x, text2_y), 
+                           font_face, font_scale, (255, 255, 255), thickness)
+            else:
+                # 1行で十分な場合
+                # テキストの位置を計算（中央配置）
+                text_x = (width - text_width) // 2
+                text_y = (height + text_height) // 2
+                
+                # テキストを描画
+                cv2.putText(default_depth_image, text, (text_x, text_y), 
+                           font_face, font_scale, (255, 255, 255), thickness)
     
     return default_depth_image
 

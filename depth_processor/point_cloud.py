@@ -419,13 +419,28 @@ def visualize_occupancy_grid(occupancy_grid, scale_factor=5):
         free_cells = np.sum(occupancy_grid == 2)
         total_cells = grid_h * grid_w
         
-        stats_text = f"Free: {free_cells}/{total_cells} ({free_cells/total_cells*100:.0f}%)"
-        cv2.putText(visualization, stats_text, (10, 20), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, [30, 220, 30], 2)
-        
-        stats_text = f"Obstacle: {obstacle_cells}/{total_cells} ({obstacle_cells/total_cells*100:.0f}%)"
-        cv2.putText(visualization, stats_text, (10, 45), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, [0, 50, 220], 2)
+        # 日本語対応テキスト表示（通常のテキストも表示可能）
+        try:
+            from fix_text_encoding import cv2_putText_ja
+            # 通行可能領域
+            stats_text = f"通行可能: {free_cells}/{total_cells} ({free_cells/total_cells*100:.0f}%)"
+            visualization = cv2_putText_ja(visualization, stats_text, (10, 20), 
+                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, [30, 220, 30], 2)
+            
+            # 障害物領域
+            stats_text = f"障害物: {obstacle_cells}/{total_cells} ({obstacle_cells/total_cells*100:.0f}%)"
+            visualization = cv2_putText_ja(visualization, stats_text, (10, 45), 
+                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, [0, 50, 220], 2)
+        except ImportError:
+            # fix_text_encoding モジュールがない場合は英語表記で
+            logger.debug("fix_text_encoding module not found. Using English labels.")
+            stats_text = f"Free: {free_cells}/{total_cells} ({free_cells/total_cells*100:.0f}%)"
+            cv2.putText(visualization, stats_text, (10, 20), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, [30, 220, 30], 2)
+            
+            stats_text = f"Obstacle: {obstacle_cells}/{total_cells} ({obstacle_cells/total_cells*100:.0f}%)"
+            cv2.putText(visualization, stats_text, (10, 45), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, [0, 50, 220], 2)
         
         logger.info(f"[OccVis] Visualization complete: {visualization.shape}")
         return visualization

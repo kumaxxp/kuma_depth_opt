@@ -5,3 +5,7 @@ uvicorn>=0.15.0
 # Depth Anything関連
 torch>=1.9.0
 torchvision>=0.10.0
+# 日本語テキスト表示用
+pillow>=8.0.0
+matplotlib>=3.3.0
+requests>=2.25.0
