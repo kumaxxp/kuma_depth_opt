@@ -180,26 +180,26 @@ def process_depth_grid(depth_grid, save_dir=None):
     # 結果を表示
     plt.figure(figsize=(14, 7))
     
-    # 深度グリッド可視化
+    # Depth grid visualization
     plt.subplot(1, 3, 1)
-    plt.title("深度グリッド可視化")
+    plt.title("Depth Grid Visualization")
     plt.imshow(cv2.cvtColor(grid_vis, cv2.COLOR_BGR2RGB))
     plt.axis('off')
-    
-    # 点群を2Dにプロットしてカラーマップ表示（高さをカラーで表現）
+
+    # Point cloud 2D plot (height as color)
     plt.subplot(1, 3, 2)
-    plt.title("点群の上面図 (高さ=色)")
+    plt.title("Point Cloud Top View (Height=Color)")
     plt.scatter(point_cloud[:, 0], point_cloud[:, 2], c=point_cloud[:, 1], 
                 cmap='jet', s=10, alpha=0.7)
-    plt.colorbar(label='高さ (m)')
+    plt.colorbar(label='Height (m)')
     plt.grid(True)
     plt.axis('equal')
     plt.xlabel('X (m)')
     plt.ylabel('Z (m)')
-    
-    # トップダウンビュー（占有グリッド）
+
+    # Top-down view (occupancy grid)
     plt.subplot(1, 3, 3)
-    plt.title("トップダウン占有グリッド")
+    plt.title("Top-Down Occupancy Grid")
     plt.imshow(cv2.cvtColor(topdown_vis, cv2.COLOR_BGR2RGB))
     plt.axis('off')
     
