@@ -130,7 +130,7 @@ def process_depth_grid(depth_grid, save_dir=None):
         grid_rows=grid_rows,
         grid_cols=grid_cols
     )
-      if point_cloud is None or point_cloud.size == 0:
+    if point_cloud is None or point_cloud.size == 0:
         print("Failed to generate point cloud")
         return False
     
