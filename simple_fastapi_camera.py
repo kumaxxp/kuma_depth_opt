@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Error during shutdown: {e}")
 
-# FastAPIアプリケーションをlifespanコンテキストマネージャーで初期化
+# Initialize FastAPI application with lifespan context manager
 app = FastAPI(lifespan=lifespan)
 
 cap = cv2.VideoCapture(0)
@@ -52,30 +52,30 @@ if not cap.isOpened():
     import sys
     sys.exit(1)
 else:
-    print(f"カメラ接続成功: {int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}")
+    print(f"Camera connected successfully: {int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}")
 
 depth_processor = DepthProcessor()
 
-# 共有メモリを拡張
+# Expand shared memory
 latest_depth_map = None
 latest_camera_frame = None
-latest_depth_grid = None # ★追加: 圧縮済み深度グリッド用
+latest_depth_grid = None # Added: for compressed depth grid
 frame_timestamp = 0
-depth_map_lock = threading.Lock() # latest_depth_map, latest_camera_frame, latest_depth_grid の保護用
+depth_map_lock = threading.Lock() # Protection for latest_depth_map, latest_camera_frame, latest_depth_grid
 last_inference_time = 0
 INFERENCE_INTERVAL = 0.08
-GRID_COMPRESSION_SIZE = (12, 16) # グリッド圧縮サイズ (rows, cols)
+GRID_COMPRESSION_SIZE = (12, 16) # Grid compression size (rows, cols)
 
-# カメラ内部パラメータ (仮の値 - 実際にはキャリブレーションで取得)
-# raw_depth_map (256x384) に対応する値を想定
+# Camera internal parameters (approximate values - actually obtained by calibration)
+# Values corresponding to raw_depth_map (256x384)
 ORIGINAL_DEPTH_HEIGHT = 256
 ORIGINAL_DEPTH_WIDTH = 384
-FX = 332.5  # 例: 384 / (2 * tan(60deg_hfov / 2))
-FY = 309.0  # 例: 256 / (2 * tan(45deg_vfov / 2))
+FX = 332.5  # Example: 384 / (2 * tan(60deg_hfov / 2))
+FY = 309.0  # Example: 256 / (2 * tan(45deg_vfov / 2))
 CX = ORIGINAL_DEPTH_WIDTH / 2.0
 CY = ORIGINAL_DEPTH_HEIGHT / 2.0
 
-# カメラキャプチャ専用スレッド（修正）
+# Camera capture dedicated thread (modified)
 def camera_capture_thread():
     global latest_camera_frame, frame_timestamp
     consecutive_errors = 0
@@ -88,13 +88,13 @@ def camera_capture_thread():
                 with depth_map_lock:
                     latest_camera_frame = frame.copy()
                     frame_timestamp = time.time()
-                consecutive_errors = 0  # エラーカウンタをリセット
+                consecutive_errors = 0  # Reset error counter
             else:
                 consecutive_errors += 1
-                print(f"カメラ読み取りエラー ({consecutive_errors}/{max_errors})")
+                print(f"Camera read error ({consecutive_errors}/{max_errors})")
                 
                 if consecutive_errors >= max_errors:
-                    print("カメラをリセットします...")
+                    print("Resetting camera...")
                     cap.release()
                     time.sleep(1.0)
                     cap.open(0)
@@ -109,20 +109,20 @@ def camera_capture_thread():
             
         time.sleep(0.05)  # 20FPSを維持
 
-# 処理時間計測用
+# For processing time measurement
 camera_times = deque(maxlen=1000)
 inference_times = deque(maxlen=1000)
-compression_times = deque(maxlen=1000) # ★追加: 圧縮時間用
+compression_times = deque(maxlen=1000) # Added: for compression time
 visualization_times = deque(maxlen=1000)
 encoding_times = deque(maxlen=1000)
 
-# パフォーマンス統計用の変数を追加
+# Add variables for performance statistics
 fps_stats = {
     "camera": deque(maxlen=30),
     "depth": deque(maxlen=30),
     "grid": deque(maxlen=30),
     "inference": deque(maxlen=30),
-    "compression": deque(maxlen=30), # ★追加: 圧縮FPS用
+    "compression": deque(maxlen=30), # Added: for compression FPS
     "top_down": deque(maxlen=30)
 }
 last_frame_times = {
@@ -734,11 +734,11 @@ def get_top_down_view_stream():
         
         # フレームレート制御
         time.sleep(0.1)  # 10 FPS 程度に制限（Top-Down処理は重いため）
-# 例外ハンドリングを強化
+# Enhance exception handling
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
-    error_msg = f"予期せぬエラーが発生しました: {str(exc)}"
-    print(f"[エラー] {error_msg}")
+    error_msg = f"An unexpected error occurred: {str(exc)}"
+    print(f"[ERROR] {error_msg}")
     import traceback
     print(traceback.format_exc())
     
@@ -753,8 +753,8 @@ if __name__ == "__main__":
     try:
         uvicorn.run(app, host="0.0.0.0", port=8888)
     except KeyboardInterrupt:
-        print("Ctrl+Cが押されました。アプリケーションを終了します。")
+        print("Ctrl+C pressed. Shutting down the application.")
     except Exception as e:
-        print(f"予期せぬエラーでアプリケーションが終了しました: {e}")
+        print(f"Application terminated due to unexpected error: {e}")
         import traceback
         print(traceback.format_exc())
