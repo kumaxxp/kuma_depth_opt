@@ -549,18 +549,18 @@ def get_top_down_view_stream():
     except Exception as e:
         print(f"[TopDownStream] Warning: Failed to create keep-alive frame: {e}")
     
-    # 設定パラメータ
+    # 圧縮データに合わせたパラメータ設定
     scaling_factor = 15.0  # 深度スケーリング係数
-    grid_resolution = 0.1  # グリッドの解像度（メートル/セル）
-    grid_width = 100       # グリッドの幅（セル数）
-    grid_height = 100      # グリッドの高さ（セル数）
-    height_threshold = 0.3 # 通行可能と判定する高さの閾値（メートル）
+    grid_resolution = 0.1 * 20  # 圧縮データ用にグリッド解像度を調整（元の解像度 * 圧縮率）
+    grid_width = 30       # グリッドの幅（セル数）
+    grid_height = 30      # グリッドの高さ（セル数）
+    height_threshold = 0.3 * 20  # 圧縮データに合わせて閾値調整（元の閾値 * 圧縮率）
     
     # グローバル変数の状態確認
     print("[TopDownStream] グローバル変数状態チェック:")
     print(f"[TopDownStream] GRID_COMPRESSION_SIZE: {GRID_COMPRESSION_SIZE}")
     print(f"[TopDownStream] Camera Parameters: FX={FX}, FY={FY}, CX={CX}, CY={CY}")
-    print(f"[TopDownStream] ORIGINAL_DEPTH_HEIGHT: {ORIGINAL_DEPTH_HEIGHT}, ORIGINAL_DEPTH_WIDTH: {ORIGINAL_DEPTH_WIDTH}")
+    print(f"[TopDownStream] 圧縮処理に合わせたパラメータ: grid_resolution={grid_resolution}, height_threshold={height_threshold}")
     
     # エラーカウンター
     error_count = 0
@@ -573,17 +573,14 @@ def get_top_down_view_stream():
     
     # メインループ
     while True:
-        current_grid_data = None
-        current_raw_depth_map = None
+        current_compressed_grid = None
 
         try:
             with depth_map_lock:
                 if latest_depth_grid is not None:
-                    current_grid_data = latest_depth_grid.copy()
-                if latest_depth_map is not None:
-                    current_raw_depth_map = latest_depth_map.copy()
+                    current_compressed_grid = latest_depth_grid.copy()
             
-            if current_grid_data is None or current_raw_depth_map is None:
+            if current_compressed_grid is None:
                 # データがない場合は待機して「No Data」画像を送信
                 current_time = time.time()
                 if current_time - last_error_time > 5:  # 5秒ごとにログ出力
@@ -603,26 +600,33 @@ def get_top_down_view_stream():
             start_time_vis = time.perf_counter()
             
             try:
-                # 圧縮グリッドデータを絶対深度に変換
-                original_height, original_width = current_raw_depth_map.shape[:2]
-                print(f"[TopDownStream] Processing depth data: grid={current_grid_data.shape}, raw={current_raw_depth_map.shape}")
+                # 圧縮グリッドデータのサイズを取得
+                grid_rows, grid_cols = current_compressed_grid.shape[:2]
+                print(f"[TopDownStream] Processing compressed grid data of shape: {current_compressed_grid.shape}")
                 
-                # 絶対深度へ変換
+                # 絶対深度へ変換（圧縮データ用パラメータ指定）
                 print(f"[TopDownStream] Converting grid to absolute depth with scaling_factor={scaling_factor}")
-                absolute_depth_grid = convert_to_absolute_depth(current_grid_data, scaling_factor=scaling_factor)
+                absolute_depth_grid = convert_to_absolute_depth(
+                    current_compressed_grid, 
+                    scaling_factor=scaling_factor, 
+                    is_compressed_grid=True
+                )
                 if absolute_depth_grid is not None:
                     print(f"[TopDownStream] Absolute depth range: {np.min(absolute_depth_grid):.2f}m to {np.max(absolute_depth_grid):.2f}m")
                 
-                # 点群生成
-                print(f"[TopDownStream] Generating point cloud with camera parameters: fx={FX}, fy={FY}, cx={CX}, cy={CY}")
+                # 点群生成（圧縮データ用に調整）
+                print(f"[TopDownStream] Generating point cloud directly from compressed grid")
                 point_cloud = depth_to_point_cloud(
                     absolute_depth_grid,
-                    fx=FX, fy=FY, cx=CX, cy=CY,
+                    fx=FX/GRID_COMPRESSION_SIZE[1]*grid_cols, # カメラパラメータを圧縮率で調整
+                    fy=FY/GRID_COMPRESSION_SIZE[0]*grid_rows,
+                    cx=grid_cols/2.0,  # 圧縮グリッドの中心点
+                    cy=grid_rows/2.0,
                     is_grid_data=True,
-                    original_height=original_height,
-                    original_width=original_width,
-                    grid_rows=GRID_COMPRESSION_SIZE[0],
-                    grid_cols=GRID_COMPRESSION_SIZE[1]
+                    original_height=GRID_COMPRESSION_SIZE[0],
+                    original_width=GRID_COMPRESSION_SIZE[1],
+                    grid_rows=grid_rows,
+                    grid_cols=grid_cols
                 )
                 
                 # 点群から占有グリッド生成
@@ -631,8 +635,7 @@ def get_top_down_view_stream():
                     vis_img = create_default_depth_image(width=320, height=240, text="No Valid Point Cloud")
                 else:
                     point_count = point_cloud.shape[0]
-                    print(f"[TopDownStream] Generated point cloud with {point_count} points")
-                    print(f"[TopDownStream] Point cloud data type: {point_cloud.dtype}, shape: {point_cloud.shape}")
+                    print(f"[TopDownStream] Generated point cloud with {point_count} points from compressed grid")
                     
                     # 点群データの統計情報を追加
                     if point_count > 0:
@@ -642,15 +645,11 @@ def get_top_down_view_stream():
                         z_min, z_max = np.min(point_cloud[:, 2]), np.max(point_cloud[:, 2])
                         print(f"[TopDownStream] Point cloud range - X: {x_min:.2f} to {x_max:.2f}m, Y: {y_min:.2f} to {y_max:.2f}m, Z: {z_min:.2f} to {z_max:.2f}m")
                         
-                        # 値の分布を確認
-                        x_mean, y_mean, z_mean = np.mean(point_cloud[:, 0]), np.mean(point_cloud[:, 1]), np.mean(point_cloud[:, 2])
-                        print(f"[TopDownStream] Point cloud means - X: {x_mean:.2f}m, Y: {y_mean:.2f}m, Z: {z_mean:.2f}m")
-                        
                         # Y値（高さ）の分布を詳しく確認（床検出に重要）
                         y_percentiles = np.percentile(point_cloud[:, 1], [5, 25, 50, 75, 95])
                         print(f"[TopDownStream] Height (Y) percentiles [5,25,50,75,95]: {y_percentiles}")
                     
-                    # 占有グリッド生成
+                    # 占有グリッド生成（圧縮データに合わせてパラメータ調整）
                     print(f"[TopDownStream] Creating occupancy grid: resolution={grid_resolution}m, size={grid_width}x{grid_height}, height_threshold={height_threshold}m")
                     occupancy_grid = create_top_down_occupancy_grid(
                         point_cloud, 
@@ -666,7 +665,7 @@ def get_top_down_view_stream():
                         unique_values = np.unique(occupancy_grid)
                         print(f"[TopDownStream] Grid values: {unique_values}")
                         
-                        vis_img = visualize_occupancy_grid(occupancy_grid, scale_factor=3)
+                        vis_img = visualize_occupancy_grid(occupancy_grid, scale_factor=6)
                         print(f"[TopDownStream] Occupancy grid visualized: {vis_img.shape}")
                     else:
                         print("[TopDownStream] Failed to create occupancy grid")

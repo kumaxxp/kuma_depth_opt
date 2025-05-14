@@ -276,72 +276,104 @@ def initialize_depth_model(model_path=None):
     """
     return DepthProcessor(model_path)
 
-def convert_to_absolute_depth(depth_map, scaling_factor=15.0, depth_scale=1.0):
+def convert_to_absolute_depth(depth_map, scaling_factor=15.0, depth_scale=1.0, is_compressed_grid=True):
     """
     相対深度マップを絶対深度マップ（メートル単位）に変換します
+    圧縮グリッドデータにも対応した最適化版
     
     Args:
         depth_map (numpy.ndarray): 相対深度マップ（0-1の範囲）
         scaling_factor (float): スケーリング係数（キャリブレーションで決定）
         depth_scale (float): スケーリング補正値
+        is_compressed_grid (bool): 圧縮グリッドデータかどうか
         
     Returns:
         numpy.ndarray: 絶対深度マップ（メートル単位）
     """
     try:
         logger.debug(f"[AbsDepth] Input depth_map shape: {depth_map.shape}, range: {np.min(depth_map):.4f} to {np.max(depth_map):.4f}")
-        logger.debug(f"[AbsDepth] Using scaling_factor={scaling_factor:.2f}, depth_scale={depth_scale:.2f}")
+        logger.debug(f"[AbsDepth] Using scaling_factor={scaling_factor:.2f}, depth_scale={depth_scale:.2f}, is_compressed_grid={is_compressed_grid}")
         
         if depth_map is None or depth_map.size == 0:
             logger.warning("[AbsDepth] Error: Empty depth map")
             # 空のデータの場合は2~5mの範囲のデフォルト深度マップを返す（テスト表示用）
-            return np.ones((12, 16), dtype=np.float32) * 3.0
+            if is_compressed_grid:
+                return np.ones((12, 16), dtype=np.float32) * 3.0
+            else:
+                return np.ones((256, 384), dtype=np.float32) * 3.0
         
         # 深度マップがゼロに近い値を持つ場所を処理（ゼロ除算防止）
         valid_mask = depth_map > 0.01
         
         # 有効なデータの割合を計算
         valid_percentage = np.sum(valid_mask) * 100.0 / depth_map.size
-        logger.debug(f"[AbsDepth] Valid depth values: {np.sum(valid_mask)}/{depth_map.size} ({valid_percentage:.1f}%)")
+        valid_count = np.sum(valid_mask)
+        logger.info(f"[AbsDepth] Valid depth values: {valid_count}/{depth_map.size} ({valid_percentage:.1f}%)")
         
-        if np.sum(valid_mask) == 0:
+        if valid_count == 0:
             logger.warning("[AbsDepth] Warning: No valid depth values found")
             return np.ones_like(depth_map) * 3.0  # デフォルト3メートル
         
         # 絶対深度マップの初期化
         absolute_depth = np.ones_like(depth_map) * 3.0  # デフォルト3メートル
         
-        # スケーリング係数を用いて相対深度から絶対深度を計算
-        near_point = np.max(depth_map[valid_mask])
-        far_point = np.min(depth_map[valid_mask])
-        logger.debug(f"[AbsDepth] Near point value: {near_point:.4f}, Far point value: {far_point:.4f}")
+        # 統計情報を出力
+        valid_values = depth_map[valid_mask]
+        near_point = np.max(valid_values)
+        far_point = np.min(valid_values)
+        median_point = np.median(valid_values)
+        logger.info(f"[AbsDepth] Depth stats - Near: {near_point:.4f}, Far: {far_point:.4f}, Median: {median_point:.4f}")
+        
+        # パーセンタイル値も計算（異常値の影響を減らすため）
+        percentiles = np.percentile(valid_values, [5, 25, 50, 75, 95])
+        logger.debug(f"[AbsDepth] Depth percentiles [5,25,50,75,95]: {percentiles}")
+        
+        # 圧縮グリッドデータの場合は異常値除外を強化
+        if is_compressed_grid:
+            # 圧縮データの場合、パーセンタイルベースで計算することで誤差を削減
+            effective_near = percentiles[4]  # 95パーセンタイル値を「最も近い点」として使用
+            effective_far = percentiles[0]   # 5パーセンタイル値を「最も遠い点」として使用
+            logger.debug(f"[AbsDepth] Using percentiles for compressed data - Near: {effective_near:.4f}, Far: {effective_far:.4f}")
+        else:
+            # 非圧縮データの場合、そのまま使用
+            effective_near = near_point
+            effective_far = far_point
+        
+        # 安全な計算のため範囲チェック
+        depth_range = effective_near - effective_far
+        if depth_range < 0.01:  # 深度範囲が小さすぎる場合
+            logger.warning("[AbsDepth] Warning: Depth range too small, using default transformation")
+            depth_range = 0.01  # 最小値設定
         
         # 最も近いポイントを基準にスケーリング
-        # 安全な計算のためにゼロ除算を防止
-        diff = near_point - depth_map
-        diff_valid = diff[valid_mask]
+        # 圧縮データ用の調整されたアルゴリズム
+        diff = effective_near - depth_map
         
-        # 有効な差分値の範囲を確認
-        logger.debug(f"[AbsDepth] Diff range: {np.min(diff_valid):.4f} to {np.max(diff_valid):.4f}")
+        # 正規化して絶対深度に変換
+        normalized_diff = np.clip(diff / depth_range, 0, 1) # 0-1の範囲に制限
+        # スケーリング係数は圧縮データ用に調整
+        adjusted_scaling = scaling_factor * (1.0 if is_compressed_grid else depth_scale)
         
-        # 最小値を制限して除算の安全性を確保
-        min_diff = 0.01
-        original_min = np.min(diff_valid)
-        diff_valid[diff_valid < min_diff] = min_diff
-        logger.debug(f"[AbsDepth] Min diff value adjusted: {original_min:.4f} -> {min_diff:.4f}")
+        # 有効なピクセルにのみ適用
+        absolute_depth[valid_mask] = 0.5 + normalized_diff[valid_mask] * adjusted_scaling
         
-        # スケーリング適用
-        absolute_depth[valid_mask] = scaling_factor * depth_scale / diff_valid
+        # 異常な深度値をフィルタリング
+        absolute_depth[absolute_depth < 0.1] = 0.1  # 最小深度
+        absolute_depth[absolute_depth > 50.0] = 50.0  # 最大深度
         
-        # 物理的に合理的な範囲に制限（0.3mから10m）
-        absolute_depth = np.clip(absolute_depth, 0.3, 10.0)
+        # 結果の統計情報
+        valid_mask = absolute_depth > 0.1  # 有効な深度値マスク更新
+        if np.any(valid_mask):
+            abs_min = np.min(absolute_depth[valid_mask])
+            abs_max = np.max(absolute_depth[valid_mask])
+            abs_mean = np.mean(absolute_depth[valid_mask])
+            logger.info(f"[AbsDepth] Absolute depth stats - Min: {abs_min:.2f}m, Max: {abs_max:.2f}m, Mean: {abs_mean:.2f}m")
         
-        logger.debug(f"[AbsDepth] Output absolute_depth shape: {absolute_depth.shape}, min: {np.min(absolute_depth):.4f}, max: {np.max(absolute_depth):.4f}")
         return absolute_depth
         
     except Exception as e:
-        logger.error(f"[AbsDepth] Error: {str(e)}")
+        logger.error(f"[AbsDepth] Error in convert_to_absolute_depth: {str(e)}")
         import traceback
-        logger.error(traceback.format_exc())
+        logger.debug(traceback.format_exc())
         # エラー時はデフォルト値を返す
         return np.ones_like(depth_map) * 3.0

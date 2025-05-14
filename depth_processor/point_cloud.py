@@ -30,7 +30,7 @@ def depth_to_point_cloud(depth_data, fx, fy, cx, cy,
     """
     深度データから3D点群を生成します。
     高解像度深度マップと圧縮グリッドデータの両方に対応します。
-
+    
     Args:
         depth_data (numpy.ndarray): 深度データ。フル解像度マップまたは圧縮グリッド。
         fx (float): カメラの水平方向の焦点距離。
@@ -57,8 +57,6 @@ def depth_to_point_cloud(depth_data, fx, fy, cx, cy,
         else:
             logger.debug("[PointCloud] Full resolution mode")
         
-        points = []
-        
         # 入力チェック
         if depth_data is None or depth_data.size == 0:
             logger.warning("[PointCloud] Error: Empty depth data")
@@ -66,48 +64,64 @@ def depth_to_point_cloud(depth_data, fx, fy, cx, cy,
         
         if is_grid_data:
             # グリッドデータのパラメータチェック
-            if not all([original_height, original_width, grid_rows, grid_cols]):
-                logger.warning("[PointCloud] Error: Missing grid parameters")
+            if grid_rows is None or grid_cols is None:
+                # 実際のデータ形状から推定
+                grid_rows, grid_cols = depth_data.shape[:2]
+                logger.debug(f"[PointCloud] Using actual grid dimensions: {grid_rows}x{grid_cols}")
+            
+            # 圧縮データから直接点群生成（ベクトル化処理で高速化）
+            # グリッドのインデックスを作成
+            r_indices, c_indices = np.indices((grid_rows, grid_cols))
+            
+            # 有効な深度値の判定
+            valid_mask = depth_data > 0.01
+            valid_depth = depth_data[valid_mask]
+            
+            if valid_depth.size == 0:
+                logger.warning("[PointCloud] No valid depth values in grid data")
                 return np.empty((0, 3), dtype=np.float32)
+                
+            valid_r = r_indices[valid_mask]
+            valid_c = c_indices[valid_mask]
             
-            # 各グリッドセルの中心から点を生成
-            valid_points_count = 0
-            total_points = 0
+            # グリッドセルに対応する中心ピクセル座標を計算
+            u_centers = (valid_c + 0.5)  # グリッド上での中心座標
+            v_centers = (valid_r + 0.5)
             
-            for r_idx in range(grid_rows):
-                for c_idx in range(grid_cols):
-                    total_points += 1
-                    depth_value = depth_data[r_idx, c_idx]
-                    
-                    # 無効な深度値はスキップ
-                    if depth_value <= 0.01:
-                        continue
-                    
-                    # グリッドセルに対応する元画像上の中心ピクセル座標を計算
-                    u_center = (c_idx + 0.5) * (original_width / grid_cols)
-                    v_center = (r_idx + 0.5) * (original_height / grid_rows)
-                    
-                    # 3D座標を計算 (カメラ座標系: x右, y下, z前)
-                    x = (u_center - cx) * depth_value / fx
-                    y = (v_center - cy) * depth_value / fy
-                    z = depth_value
-                    
-                    # 計算結果のチェック (NaNやInfを排除)
-                    if np.isnan(x) or np.isnan(y) or np.isnan(z) or \
-                       np.isinf(x) or np.isinf(y) or np.isinf(z):
-                        continue
-                    
-                    # 極端な値を除外
-                    if abs(x) > 10 or abs(y) > 10 or z > 20 or z < 0:
-                        continue
-                    
-                    points.append([x, y, z])
-                    valid_points_count += 1
+            # 3D座標を一括計算
+            # 注意: cx, cyはグリッドの中心点を使用
+            x_values = (u_centers - cx) * valid_depth / fx
+            y_values = (v_centers - cy) * valid_depth / fy
+            z_values = valid_depth
             
-            logger.info(f"[PointCloud] Grid mode: {valid_points_count}/{total_points} valid points generated")
+            # 無効な値をフィルタリング
+            valid_idx = ~(np.isnan(x_values) | np.isnan(y_values) | np.isnan(z_values) |
+                          np.isinf(x_values) | np.isinf(y_values) | np.isinf(z_values))
+            valid_idx &= (np.abs(x_values) < 10) & (np.abs(y_values) < 10) & (z_values < 20) & (z_values > 0)
+            
+            if np.sum(valid_idx) == 0:
+                logger.warning("[PointCloud] No valid points after filtering")
+                return np.empty((0, 3), dtype=np.float32)
+                
+            x_values = x_values[valid_idx]
+            y_values = y_values[valid_idx]
+            z_values = z_values[valid_idx]
+            
+            logger.info(f"[PointCloud] Grid mode: {np.sum(valid_idx)}/{valid_mask.sum()} valid points after filtering")
+            
+            # 圧縮データ専用のデバッグ出力
+            logger.debug(f"[PointCloud] Compressed grid stats - X: min={np.min(x_values):.2f}, max={np.max(x_values):.2f}")
+            logger.debug(f"[PointCloud] Compressed grid stats - Y: min={np.min(y_values):.2f}, max={np.max(y_values):.2f}")
+            logger.debug(f"[PointCloud] Compressed grid stats - Z: min={np.min(z_values):.2f}, max={np.max(z_values):.2f}")
+            
+            # 結果をスタック
+            points = np.stack((x_values, y_values, z_values), axis=-1)
+            logger.info(f"[PointCloud] Generated {points.shape[0]} points from compressed grid")
+            return points
+            
         else:
             # フル解像度深度マップの処理 (ベクトル化)
-            h, w = depth_data.shape
+            h, w = depth_data.shape[:2]
             v_coords, u_coords = np.indices((h, w))
             
             valid_mask = depth_data > 0.01  # 有効な深度点のみを対象
@@ -139,14 +153,6 @@ def depth_to_point_cloud(depth_data, fx, fy, cx, cy,
             points = np.stack((x_cam, y_cam, z_values), axis=-1)
             return points
         
-        if not points:
-            logger.warning("[PointCloud] No valid points generated")
-            return np.empty((0, 3), dtype=np.float32)
-        
-        result = np.array(points, dtype=np.float32)
-        logger.info(f"[PointCloud] Final output: {result.shape} points")
-        return result
-        
     except Exception as e:
         logger.error(f"[PointCloud] Error in depth_to_point_cloud: {str(e)}")
         import traceback
@@ -158,6 +164,7 @@ def create_top_down_occupancy_grid(points, grid_resolution=GRID_RESOLUTION,
                                   height_threshold=HEIGHT_THRESHOLD):
     """
     3D点群から天頂視点の占有グリッドを生成します。
+    圧縮データにも対応した最適化バージョンです。
 
     Args:
         points (numpy.ndarray): 形状 (N, 3) の3D点群データ
@@ -186,11 +193,11 @@ def create_top_down_occupancy_grid(points, grid_resolution=GRID_RESOLUTION,
         logger.debug(f"[OccGrid] Processing {points.shape[0]} points")
         logger.debug(f"[OccGrid] Point cloud data type: {points.dtype}")
         
-        # グリッドの中心
+        # グリッドの中心位置を計算（カメラ位置を基準に）
         grid_center_x = grid_width // 2
-        grid_center_y = grid_height - 10  # カメラの少し前を中心にする
+        grid_center_y = grid_height - 10  # カメラの少し前を中心とする
         
-        # 点群データをグリッド座標に変換
+        # 点群データをグリッド座標に変換（ベクトル化処理）
         # X軸（左右）をグリッドの横方向にマッピング
         grid_x = np.round(points[:, 0] / grid_resolution + grid_center_x).astype(int)
         # Z軸（前後）をグリッドの縦方向にマッピング
@@ -201,6 +208,10 @@ def create_top_down_occupancy_grid(points, grid_resolution=GRID_RESOLUTION,
         # 処理前にグリッドの範囲を確認
         logger.debug(f"[OccGrid] Grid X range: {np.min(grid_x)} to {np.max(grid_x)}, Grid Y range: {np.min(grid_y)} to {np.max(grid_y)}")
         logger.debug(f"[OccGrid] Height range: {np.min(height)} to {np.max(height)}")
+        
+        # 高さの分布を確認（床と天井の検出に重要）
+        height_percentiles = np.percentile(height, [5, 25, 50, 75, 95])
+        logger.debug(f"[OccGrid] Height percentiles [5,25,50,75,95]: {height_percentiles}")
         
         # グリッド内の点のみを処理
         valid_idx = (grid_x >= 0) & (grid_x < grid_width) & (grid_y >= 0) & (grid_y < grid_height)
@@ -216,21 +227,39 @@ def create_top_down_occupancy_grid(points, grid_resolution=GRID_RESOLUTION,
         
         logger.info(f"[OccGrid] {np.sum(valid_idx)} points within grid bounds")
         
-        # グリッドセルごとに高さ情報を集計
-        for i, (x, y) in enumerate(zip(grid_x, grid_y)):
-            # Y軸は下向きが正なので、床は負の大きな値になる可能性がある
-            # しきい値より低い（床レベル）または高い（天井レベル）を判定
-            logger.debug(f"[OccGrid] Point {i}: pos=({x},{y}), height={height[i]:.3f}, threshold={height_threshold:.3f}")
+        # オプション：より高速な処理のためにNumPyのベクトル化処理を使用
+        # 各グリッドセルごとに最適な分類を決定
+        
+        # 圧縮データ用に最適化：点単位ではなくグリッドセル単位で処理
+        # 各セルの座標とその高さ値をグループ化
+        unique_cells = {}  # (x, y) -> [heights]
+        
+        # グリッドセルと高さ値のマッピングを作成
+        for i, (x, y, h) in enumerate(zip(grid_x, grid_y, height)):
+            cell_key = (x, y)
+            if cell_key not in unique_cells:
+                unique_cells[cell_key] = []
+            unique_cells[cell_key].append(h)
+        
+        # 各セルの分類を決定
+        logger.debug(f"[OccGrid] Processing {len(unique_cells)} unique grid cells")
+        
+        for (x, y), heights in unique_cells.items():
+            # 複数の高さ値がある場合は統計量を計算
+            heights_array = np.array(heights)
+            min_height = np.min(heights_array)
+            max_height = np.max(heights_array)
             
-            # 高さの閾値を修正: 床または天井として扱う値の範囲を広げる
-            # height[i] < -height_threshold：床レベル (低い位置)
-            # height[i] > height_threshold：天井/高い位置のもの
-            if height[i] < -height_threshold or height[i] > height_threshold:
+            # 高さの閾値を使って分類
+            # 床/天井の判定: min_height < -height_threshold または max_height > height_threshold
+            if min_height < -height_threshold or max_height > height_threshold:
                 # 床または通行可能な領域
                 grid[y, x] = 2
+                logger.debug(f"[OccGrid] Cell ({x},{y}) classified as FREE: heights [{min_height:.2f} to {max_height:.2f}]")
             else:
                 # 障害物（床より上、天井より下にある物体）
                 grid[y, x] = 1
+                logger.debug(f"[OccGrid] Cell ({x},{y}) classified as OBSTACLE: heights [{min_height:.2f} to {max_height:.2f}]")
         
         # グリッドの簡単な統計
         unknown_cells = np.sum(grid == 0)
@@ -248,7 +277,7 @@ def create_top_down_occupancy_grid(points, grid_resolution=GRID_RESOLUTION,
 
 def visualize_occupancy_grid(occupancy_grid, scale_factor=5):
     """
-    占有グリッドを視覚化する関数
+    占有グリッドを視覚化する関数。圧縮データに合わせて最適化。
     
     Args:
         occupancy_grid: 占有グリッド（0=不明、1=障害物、2=通行可能）
@@ -273,53 +302,49 @@ def visualize_occupancy_grid(occupancy_grid, scale_factor=5):
         # グリッドのサイズ
         grid_h, grid_w = occupancy_grid.shape
         
+        # 小さいグリッドの場合は大きめのスケールファクターを使用
+        if grid_h < 50 or grid_w < 50:
+            logger.debug(f"[OccVis] Small grid detected, using larger scale factor: {scale_factor}")
+        
         scaled_h = grid_h * scale_factor
         scaled_w = grid_w * scale_factor
         
         # 表示用のキャンバスを作成（RGB）
         visualization = np.zeros((scaled_h, scaled_w, 3), dtype=np.uint8)
         
-        # グリッドデータの範囲と統計情報をデバッグ出力
-        logger.debug(f"[OccVis] Grid size: {grid_h}x{grid_w}, scaled to {scaled_h}x{scaled_w}")
-        logger.debug(f"[OccVis] Grid value range: {np.min(occupancy_grid)} to {np.max(occupancy_grid)}")
-        
-        # 色の定義 (BGR)
+        # 色の定義 (BGR) - 視認性を高めるためにコントラストを強調
         colors = {
-            0: [100, 100, 100],  # 不明領域: グレー
-            1: [0, 0, 255],      # 障害物: 赤色
-            2: [0, 200, 0]       # 通行可能: 緑色
+            0: [80, 80, 80],     # 不明領域: 暗いグレー
+            1: [0, 50, 220],     # 障害物: より明るい赤色
+            2: [30, 220, 30]     # 通行可能: より明るい緑色
         }
         
-        # グリッドの内容を描画
-        for r in range(grid_h):
-            for c in range(grid_w):
-                cell_value = int(occupancy_grid[r, c])
-                if cell_value not in colors:
-                    cell_value = 0  # 不正な値はグレーにする
-                    
-                color = colors[cell_value]
+        # グリッドの内容を描画（ベクトル化処理で高速化）
+        # NumPy操作で画像全体を一度に作成
+        for cell_value, color in colors.items():
+            mask = occupancy_grid == cell_value
+            if np.any(mask):
+                # マスクを拡大
+                expanded_mask = np.repeat(np.repeat(mask, scale_factor, axis=0), scale_factor, axis=1)
                 
-                # セルを描画
-                cv2.rectangle(visualization,
-                            (c * scale_factor, r * scale_factor),
-                            ((c + 1) * scale_factor - 1, (r + 1) * scale_factor - 1),
-                            color,
-                            -1)  # -1 は塗りつぶし
-
+                # 色を適用
+                for c_idx, c_val in enumerate(color):
+                    visualization[:, :, c_idx][expanded_mask] = c_val
+        
         # 中央に車両位置を示す点を描画
-        # 元のグリッドでの中心位置
-        orig_center_x, orig_center_y = grid_w // 2, grid_h - 10
+        # 元のグリッドでの中心位置 (圧縮グリッドに合わせて計算)
+        orig_center_x, orig_center_y = grid_w // 2, grid_h - grid_h // 10
         
         # スケール後の中心位置 (セルの中心になるように調整)
         center_x = orig_center_x * scale_factor + scale_factor // 2
         center_y = orig_center_y * scale_factor + scale_factor // 2
         
         # 車両位置のマーカー
-        marker_radius = 3 * scale_factor
+        marker_radius = max(3, scale_factor)
         cv2.circle(visualization, (center_x, center_y), marker_radius, [255, 255, 255], -1)
         
         # 進行方向の矢印
-        arrow_length = 10 * scale_factor
+        arrow_length = max(10, scale_factor * 2)
         arrow_thickness = max(1, scale_factor // 2)
         cv2.arrowedLine(visualization,
                       (center_x, center_y),
@@ -329,22 +354,53 @@ def visualize_occupancy_grid(occupancy_grid, scale_factor=5):
                       tipLength=0.3)
         
         # グリッド線を描画（視覚的な参考用）
-        line_color = [50, 50, 50]
+        line_color = [50, 50, 50]  # 暗めのグレー
         line_thickness = 1
         
-        # 水平線と垂直線を10セルごとに描画
-        for i in range(0, grid_h + 1, 10):
+        # 小さいグリッド用に間隔を調整
+        grid_spacing = max(1, min(5, grid_h // 5))
+        
+        # 水平線と垂直線を描画
+        for i in range(0, grid_h + 1, grid_spacing):
             y = i * scale_factor
             cv2.line(visualization, (0, y), (scaled_w, y), line_color, line_thickness)
             
-        for j in range(0, grid_w + 1, 10):
+        for j in range(0, grid_w + 1, grid_spacing):
             x = j * scale_factor
             cv2.line(visualization, (x, 0), (x, scaled_h), line_color, line_thickness)
         
-        # テキスト情報追加
-        cell_stats = f"Cells - Unknown: {np.sum(occupancy_grid == 0)}, Obstacle: {np.sum(occupancy_grid == 1)}, Free: {np.sum(occupancy_grid == 2)}"
-        cv2.putText(visualization, cell_stats, (10, scaled_h - 10), 
-                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, [200, 200, 200], 1)
+        # 1メートルスケールを表示（グリッド解像度を可視化）
+        meter_text = "1m"
+        # グリッドの解像度から1メートルあたりのピクセル数を計算
+        grid_resolution = 0.1 * 20  # 圧縮グリッド用の解像度
+        pixels_per_meter = scale_factor / grid_resolution
+        meter_line_length = int(pixels_per_meter)
+        
+        # スケールバーを描画
+        scale_bar_y = scaled_h - 30
+        scale_bar_x = 20
+        cv2.line(visualization, 
+                (scale_bar_x, scale_bar_y), 
+                (scale_bar_x + meter_line_length, scale_bar_y), 
+                [200, 200, 200], 2)
+        # スケールテキストを描画
+        cv2.putText(visualization, meter_text, 
+                   (scale_bar_x + meter_line_length // 2 - 10, scale_bar_y - 5),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, [200, 200, 200], 1)
+        
+        # セル統計情報を追加
+        unknown_cells = np.sum(occupancy_grid == 0)
+        obstacle_cells = np.sum(occupancy_grid == 1)
+        free_cells = np.sum(occupancy_grid == 2)
+        total_cells = grid_h * grid_w
+        
+        stats_text = f"Free: {free_cells}/{total_cells} ({free_cells/total_cells*100:.0f}%)"
+        cv2.putText(visualization, stats_text, (10, 20), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, [30, 220, 30], 2)
+        
+        stats_text = f"Obstacle: {obstacle_cells}/{total_cells} ({obstacle_cells/total_cells*100:.0f}%)"
+        cv2.putText(visualization, stats_text, (10, 45), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, [0, 50, 220], 2)
         
         logger.info(f"[OccVis] Visualization complete: {visualization.shape}")
         return visualization
