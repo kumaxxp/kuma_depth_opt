@@ -251,6 +251,59 @@ def get_depth_stream():
         yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
         time.sleep(0.015)  # 約66FPSに向上（0.02→0.015に変更）
 
+# カメラストリームを提供する関数を追加
+def get_camera_stream():
+    """カメラ映像のストリームを提供する関数"""
+    while True:
+        current_frame = None
+        
+        # 共有メモリからカメラフレームを取得
+        with depth_map_lock:
+            if latest_camera_frame is None:
+                time.sleep(0.01)
+                continue
+            current_frame = latest_camera_frame.copy()
+            current_timestamp = frame_timestamp
+            
+        if current_frame is None:
+            time.sleep(0.01)
+            continue
+            
+        # カメラ処理時間測定開始
+        start_time = time.perf_counter()
+        
+        # FPSの計算
+        now = time.time()
+        if last_frame_times["camera"] > 0:
+            fps = 1.0 / (now - last_frame_times["camera"])
+            fps_stats["camera"].append(fps)
+        last_frame_times["camera"] = now
+        
+        # 情報をオーバーレイ表示
+        if len(fps_stats["camera"]) > 0:
+            avg_fps = sum(fps_stats["camera"]) / len(fps_stats["camera"])
+            cv2.putText(current_frame, f"FPS: {avg_fps:.1f}", (10, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                       
+            # 遅延表示
+            delay = (time.time() - current_timestamp) * 1000
+            cv2.putText(current_frame, f"Delay: {delay:.1f}ms", (10, 60),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        # 処理時間計測
+        camera_times.append(time.perf_counter() - start_time)
+        
+        # JPEG エンコード
+        start_time = time.perf_counter()
+        ret, buffer = cv2.imencode('.jpg', current_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+        encoding_times.append(time.perf_counter() - start_time)
+        if not ret:
+            continue
+            
+        # フレームを送信
+        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+        time.sleep(0.015)  # 約66FPS
+
 def get_depth_grid_stream():
     while True:
         current_compressed_grid_to_visualize = None

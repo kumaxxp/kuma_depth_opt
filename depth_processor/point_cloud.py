@@ -4,6 +4,18 @@
 
 import numpy as np
 import cv2
+import logging
+
+# ロガーの取得と設定
+logger = logging.getLogger("kuma_depth_opt.point_cloud")
+logger.setLevel(logging.DEBUG)
+# ハンドラが設定されていなければ、標準出力へのハンドラを追加
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+logger.info("Logger for 'kuma_depth_opt.point_cloud' INITIALIZED.")
 
 # デフォルトパラメータ
 GRID_RESOLUTION = 0.06  # メートル/セル
@@ -37,25 +49,25 @@ def depth_to_point_cloud(depth_data, fx, fy, cx, cy,
     """
     try:
         # デバッグ出力
-        print(f"[PointCloud] Input depth_data shape: {depth_data.shape}, range: {np.min(depth_data):.4f} to {np.max(depth_data):.4f}")
-        print(f"[PointCloud] Camera params: fx={fx:.1f}, fy={fy:.1f}, cx={cx:.1f}, cy={cy:.1f}")
+        logger.debug(f"[PointCloud] Input depth_data shape: {depth_data.shape}, range: {np.min(depth_data):.4f} to {np.max(depth_data):.4f}")
+        logger.debug(f"[PointCloud] Camera params: fx={fx:.1f}, fy={fy:.1f}, cx={cx:.1f}, cy={cy:.1f}")
         
         if is_grid_data:
-            print(f"[PointCloud] Grid mode with rows={grid_rows}, cols={grid_cols}, original size={original_height}x{original_width}")
+            logger.debug(f"[PointCloud] Grid mode with rows={grid_rows}, cols={grid_cols}, original size={original_height}x{original_width}")
         else:
-            print("[PointCloud] Full resolution mode")
+            logger.debug("[PointCloud] Full resolution mode")
         
         points = []
         
         # 入力チェック
         if depth_data is None or depth_data.size == 0:
-            print("[PointCloud] Error: Empty depth data")
+            logger.warning("[PointCloud] Error: Empty depth data")
             return np.empty((0, 3), dtype=np.float32)
         
         if is_grid_data:
             # グリッドデータのパラメータチェック
             if not all([original_height, original_width, grid_rows, grid_cols]):
-                print("[PointCloud] Error: Missing grid parameters")
+                logger.warning("[PointCloud] Error: Missing grid parameters")
                 return np.empty((0, 3), dtype=np.float32)
             
             # 各グリッドセルの中心から点を生成
@@ -92,7 +104,7 @@ def depth_to_point_cloud(depth_data, fx, fy, cx, cy,
                     points.append([x, y, z])
                     valid_points_count += 1
             
-            print(f"[PointCloud] Grid mode: {valid_points_count}/{total_points} valid points generated")
+            logger.info(f"[PointCloud] Grid mode: {valid_points_count}/{total_points} valid points generated")
         else:
             # フル解像度深度マップの処理 (ベクトル化)
             h, w = depth_data.shape
@@ -102,7 +114,7 @@ def depth_to_point_cloud(depth_data, fx, fy, cx, cy,
             z_values = depth_data[valid_mask]
             
             if z_values.size == 0:
-                print("[PointCloud] No valid depth values found")
+                logger.warning("[PointCloud] No valid depth values found")
                 return np.empty((0, 3), dtype=np.float32)
             
             u_values = u_coords[valid_mask]
@@ -121,24 +133,24 @@ def depth_to_point_cloud(depth_data, fx, fy, cx, cy,
             y_cam = y_cam[valid_idx]
             z_values = z_values[valid_idx]
             
-            print(f"[PointCloud] Full res mode: {valid_idx.sum()}/{valid_mask.sum()} points after filtering")
+            logger.info(f"[PointCloud] Full res mode: {valid_idx.sum()}/{valid_mask.sum()} points after filtering")
             
             # 結果のスタック
             points = np.stack((x_cam, y_cam, z_values), axis=-1)
             return points
         
         if not points:
-            print("[PointCloud] No valid points generated")
+            logger.warning("[PointCloud] No valid points generated")
             return np.empty((0, 3), dtype=np.float32)
         
         result = np.array(points, dtype=np.float32)
-        print(f"[PointCloud] Final output: {result.shape} points")
+        logger.info(f"[PointCloud] Final output: {result.shape} points")
         return result
         
     except Exception as e:
-        print(f"[PointCloud] Error in depth_to_point_cloud: {str(e)}")
+        logger.error(f"[PointCloud] Error in depth_to_point_cloud: {str(e)}")
         import traceback
-        print(traceback.format_exc())
+        logger.debug(traceback.format_exc())
         return np.empty((0, 3), dtype=np.float32)
 
 def create_top_down_occupancy_grid(points, grid_resolution=GRID_RESOLUTION, 
@@ -161,17 +173,17 @@ def create_top_down_occupancy_grid(points, grid_resolution=GRID_RESOLUTION,
             2: 通行可能
     """
     try:
-        print(f"[OccGrid] Creating occupancy grid: resolution={grid_resolution}m, size={grid_width}x{grid_height} cells")
+        logger.info(f"[OccGrid] Creating occupancy grid: resolution={grid_resolution}m, size={grid_width}x{grid_height} cells")
         
         # 初期化: すべてのセルを「不明」に設定
         grid = np.zeros((grid_height, grid_width), dtype=np.uint8)
         
         # 空の点群チェック
         if points is None or not isinstance(points, np.ndarray) or points.size == 0:
-            print("[OccGrid] Empty point cloud, returning default grid")
+            logger.warning("[OccGrid] Empty point cloud, returning default grid")
             return grid
         
-        print(f"[OccGrid] Processing {points.shape[0]} points")
+        logger.debug(f"[OccGrid] Processing {points.shape[0]} points")
         
         # グリッドの中心
         grid_center_x = grid_width // 2
@@ -188,14 +200,14 @@ def create_top_down_occupancy_grid(points, grid_resolution=GRID_RESOLUTION,
         # グリッド内の点のみを処理
         valid_idx = (grid_x >= 0) & (grid_x < grid_width) & (grid_y >= 0) & (grid_y < grid_height)
         if np.sum(valid_idx) == 0:
-            print("[OccGrid] No points fall within grid bounds")
+            logger.warning("[OccGrid] No points fall within grid bounds")
             return grid
         
         grid_x = grid_x[valid_idx]
         grid_y = grid_y[valid_idx]
         height = height[valid_idx]
         
-        print(f"[OccGrid] {np.sum(valid_idx)} points within grid bounds")
+        logger.info(f"[OccGrid] {np.sum(valid_idx)} points within grid bounds")
         
         # グリッドセルごとに高さ情報を集計
         for i, (x, y) in enumerate(zip(grid_x, grid_y)):
@@ -212,14 +224,14 @@ def create_top_down_occupancy_grid(points, grid_resolution=GRID_RESOLUTION,
         unknown_cells = np.sum(grid == 0)
         obstacle_cells = np.sum(grid == 1)
         free_cells = np.sum(grid == 2)
-        print(f"[OccGrid] Grid stats: unknown={unknown_cells}, obstacle={obstacle_cells}, free={free_cells}")
+        logger.info(f"[OccGrid] Grid stats: unknown={unknown_cells}, obstacle={obstacle_cells}, free={free_cells}")
         
         return grid
         
     except Exception as e:
-        print(f"[OccGrid] Error in create_top_down_occupancy_grid: {str(e)}")
+        logger.error(f"[OccGrid] Error in create_top_down_occupancy_grid: {str(e)}")
         import traceback
-        print(traceback.format_exc())
+        logger.debug(traceback.format_exc())
         return np.zeros((grid_height, grid_width), dtype=np.uint8)
 
 def visualize_occupancy_grid(occupancy_grid, scale_factor=5):
@@ -234,11 +246,11 @@ def visualize_occupancy_grid(occupancy_grid, scale_factor=5):
         可視化された画像
     """
     try:
-        print(f"[OccVis] Visualizing occupancy grid with shape {occupancy_grid.shape}, scale={scale_factor}")
+        logger.info(f"[OccVis] Visualizing occupancy grid with shape {occupancy_grid.shape}, scale={scale_factor}")
         
         # グリッドチェック
         if occupancy_grid is None or not isinstance(occupancy_grid, np.ndarray) or occupancy_grid.size == 0:
-            print("[OccVis] Invalid occupancy grid")
+            logger.warning("[OccVis] Invalid occupancy grid")
             return np.zeros((240, 320, 3), dtype=np.uint8)
         
         # グリッドのサイズ
@@ -313,13 +325,13 @@ def visualize_occupancy_grid(occupancy_grid, scale_factor=5):
         cv2.putText(visualization, cell_stats, (10, scaled_h - 10), 
                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, [200, 200, 200], 1)
         
-        print(f"[OccVis] Visualization complete: {visualization.shape}")
+        logger.info(f"[OccVis] Visualization complete: {visualization.shape}")
         return visualization
         
     except Exception as e:
-        print(f"[OccVis] Error in visualize_occupancy_grid: {str(e)}")
+        logger.error(f"[OccVis] Error in visualize_occupancy_grid: {str(e)}")
         import traceback
-        print(traceback.format_exc())
+        logger.debug(traceback.format_exc())
         return np.zeros((240, 320, 3), dtype=np.uint8)
         
 # 末尾のテストコードを修正

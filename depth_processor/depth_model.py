@@ -289,10 +289,11 @@ def convert_to_absolute_depth(depth_map, scaling_factor=15.0, depth_scale=1.0):
         numpy.ndarray: 絶対深度マップ（メートル単位）
     """
     try:
-        print(f"[AbsDepth] Input depth_map shape: {depth_map.shape}, min: {np.min(depth_map):.4f}, max: {np.max(depth_map):.4f}")
+        logger.debug(f"[AbsDepth] Input depth_map shape: {depth_map.shape}, min: {np.min(depth_map):.4f}, max: {np.max(depth_map):.4f}")
+        logger.debug(f"[AbsDepth] Using scaling_factor={scaling_factor:.2f}, depth_scale={depth_scale:.2f}")
         
         if depth_map is None or depth_map.size == 0:
-            print("[AbsDepth] Error: Empty depth map")
+            logger.warning("[AbsDepth] Error: Empty depth map")
             # 空のデータの場合は2~5mの範囲のデフォルト深度マップを返す（テスト表示用）
             return np.ones((12, 16), dtype=np.float32) * 3.0
         
