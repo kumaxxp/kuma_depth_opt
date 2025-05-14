@@ -184,6 +184,7 @@ def create_top_down_occupancy_grid(points, grid_resolution=GRID_RESOLUTION,
             return grid
         
         logger.debug(f"[OccGrid] Processing {points.shape[0]} points")
+        logger.debug(f"[OccGrid] Point cloud data type: {points.dtype}")
         
         # グリッドの中心
         grid_center_x = grid_width // 2
@@ -217,13 +218,18 @@ def create_top_down_occupancy_grid(points, grid_resolution=GRID_RESOLUTION,
         
         # グリッドセルごとに高さ情報を集計
         for i, (x, y) in enumerate(zip(grid_x, grid_y)):
-            # 深度値が大きいほど近いという実装に合わせて条件を修正
-            # 負の値が大きいほど床に近い（低い位置）
-            if height[i] < -height_threshold:  # Y座標が負で、しきい値より下（床レベル）
+            # Y軸は下向きが正なので、床は負の大きな値になる可能性がある
+            # しきい値より低い（床レベル）または高い（天井レベル）を判定
+            logger.debug(f"[OccGrid] Point {i}: pos=({x},{y}), height={height[i]:.3f}, threshold={height_threshold:.3f}")
+            
+            # 高さの閾値を修正: 床または天井として扱う値の範囲を広げる
+            # height[i] < -height_threshold：床レベル (低い位置)
+            # height[i] > height_threshold：天井/高い位置のもの
+            if height[i] < -height_threshold or height[i] > height_threshold:
                 # 床または通行可能な領域
                 grid[y, x] = 2
             else:
-                # 障害物（床より上にある物体）
+                # 障害物（床より上、天井より下にある物体）
                 grid[y, x] = 1
         
         # グリッドの簡単な統計
@@ -272,6 +278,10 @@ def visualize_occupancy_grid(occupancy_grid, scale_factor=5):
         
         # 表示用のキャンバスを作成（RGB）
         visualization = np.zeros((scaled_h, scaled_w, 3), dtype=np.uint8)
+        
+        # グリッドデータの範囲と統計情報をデバッグ出力
+        logger.debug(f"[OccVis] Grid size: {grid_h}x{grid_w}, scaled to {scaled_h}x{scaled_w}")
+        logger.debug(f"[OccVis] Grid value range: {np.min(occupancy_grid)} to {np.max(occupancy_grid)}")
         
         # 色の定義 (BGR)
         colors = {

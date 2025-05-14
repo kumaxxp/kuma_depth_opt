@@ -289,7 +289,7 @@ def convert_to_absolute_depth(depth_map, scaling_factor=15.0, depth_scale=1.0):
         numpy.ndarray: 絶対深度マップ（メートル単位）
     """
     try:
-        logger.debug(f"[AbsDepth] Input depth_map shape: {depth_map.shape}, min: {np.min(depth_map):.4f}, max: {np.max(depth_map):.4f}")
+        logger.debug(f"[AbsDepth] Input depth_map shape: {depth_map.shape}, range: {np.min(depth_map):.4f} to {np.max(depth_map):.4f}")
         logger.debug(f"[AbsDepth] Using scaling_factor={scaling_factor:.2f}, depth_scale={depth_scale:.2f}")
         
         if depth_map is None or depth_map.size == 0:
@@ -300,8 +300,12 @@ def convert_to_absolute_depth(depth_map, scaling_factor=15.0, depth_scale=1.0):
         # 深度マップがゼロに近い値を持つ場所を処理（ゼロ除算防止）
         valid_mask = depth_map > 0.01
         
+        # 有効なデータの割合を計算
+        valid_percentage = np.sum(valid_mask) * 100.0 / depth_map.size
+        logger.debug(f"[AbsDepth] Valid depth values: {np.sum(valid_mask)}/{depth_map.size} ({valid_percentage:.1f}%)")
+        
         if np.sum(valid_mask) == 0:
-            print("[AbsDepth] Warning: No valid depth values found")
+            logger.warning("[AbsDepth] Warning: No valid depth values found")
             return np.ones_like(depth_map) * 3.0  # デフォルト3メートル
         
         # 絶対深度マップの初期化
@@ -309,16 +313,22 @@ def convert_to_absolute_depth(depth_map, scaling_factor=15.0, depth_scale=1.0):
         
         # スケーリング係数を用いて相対深度から絶対深度を計算
         near_point = np.max(depth_map[valid_mask])
-        print(f"[AbsDepth] Near point value: {near_point:.4f}")
+        far_point = np.min(depth_map[valid_mask])
+        logger.debug(f"[AbsDepth] Near point value: {near_point:.4f}, Far point value: {far_point:.4f}")
         
         # 最も近いポイントを基準にスケーリング
         # 安全な計算のためにゼロ除算を防止
         diff = near_point - depth_map
         diff_valid = diff[valid_mask]
         
+        # 有効な差分値の範囲を確認
+        logger.debug(f"[AbsDepth] Diff range: {np.min(diff_valid):.4f} to {np.max(diff_valid):.4f}")
+        
         # 最小値を制限して除算の安全性を確保
         min_diff = 0.01
+        original_min = np.min(diff_valid)
         diff_valid[diff_valid < min_diff] = min_diff
+        logger.debug(f"[AbsDepth] Min diff value adjusted: {original_min:.4f} -> {min_diff:.4f}")
         
         # スケーリング適用
         absolute_depth[valid_mask] = scaling_factor * depth_scale / diff_valid
@@ -326,12 +336,12 @@ def convert_to_absolute_depth(depth_map, scaling_factor=15.0, depth_scale=1.0):
         # 物理的に合理的な範囲に制限（0.3mから10m）
         absolute_depth = np.clip(absolute_depth, 0.3, 10.0)
         
-        print(f"[AbsDepth] Output absolute_depth shape: {absolute_depth.shape}, min: {np.min(absolute_depth):.4f}, max: {np.max(absolute_depth):.4f}")
+        logger.debug(f"[AbsDepth] Output absolute_depth shape: {absolute_depth.shape}, min: {np.min(absolute_depth):.4f}, max: {np.max(absolute_depth):.4f}")
         return absolute_depth
         
     except Exception as e:
-        print(f"[AbsDepth] Error: {str(e)}")
+        logger.error(f"[AbsDepth] Error: {str(e)}")
         import traceback
-        print(traceback.format_exc())
+        logger.error(traceback.format_exc())
         # エラー時はデフォルト値を返す
         return np.ones_like(depth_map) * 3.0

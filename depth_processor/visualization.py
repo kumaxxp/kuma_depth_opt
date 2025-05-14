@@ -93,20 +93,76 @@ def create_depth_visualization(depth_map, original_shape, add_colorbar=True):
             480 if original_shape is None else original_shape[0]
         )
 
-def create_default_depth_image(width=640, height=480):
+def create_default_depth_image(width=640, height=480, text=None):
     """
     デフォルトの深度イメージを生成（モデルがない場合のプレースホルダ）
     
     Args:
         width: 画像幅
         height: 画像高さ
+        text: 表示するテキスト（Noneの場合はテキストなし）
         
     Returns:
         デフォルトの深度イメージ
     """
     default_depth_image = np.zeros((height, width, 3), dtype=np.uint8)
+    
+    # グラデーション背景を生成
     for i in range(height):
         default_depth_image[i, :] = [0, 0, int(255 * i / height)]
+    
+    # テキストを表示（指定された場合）
+    if text is not None:
+        # 画像サイズに応じてフォントサイズを調整
+        font_scale = min(width, height) / 500.0  # サイズに応じてスケール調整
+        font_scale = max(0.5, min(font_scale, 1.5))  # 0.5から1.5の間に制限
+        thickness = max(1, int(font_scale * 2))
+        
+        # テキストが長い場合は複数行に分割
+        max_text_width = int(width * 0.9)  # 画像幅の90%を最大幅とする
+        font_face = cv2.FONT_HERSHEY_SIMPLEX
+        
+        # テキストの分割が必要か確認
+        (text_width, text_height), baseline = cv2.getTextSize(text, font_face, font_scale, thickness)
+        
+        if text_width > max_text_width:
+            # 長いテキストは複数行に分割（単純に半分で区切る）
+            mid_point = len(text) // 2
+            # スペースがあればそこで分割
+            for i in range(mid_point, min(len(text), mid_point + 20)):
+                if text[i] == ' ':
+                    mid_point = i
+                    break
+            
+            text1 = text[:mid_point]
+            text2 = text[mid_point:].strip()
+            
+            (text1_width, text1_height), _ = cv2.getTextSize(text1, font_face, font_scale, thickness)
+            (text2_width, text2_height), _ = cv2.getTextSize(text2, font_face, font_scale, thickness)
+            
+            # 1行目のテキスト位置
+            text1_x = (width - text1_width) // 2
+            text1_y = (height // 2) - int(text1_height * 0.5)
+            
+            # 2行目のテキスト位置
+            text2_x = (width - text2_width) // 2
+            text2_y = (height // 2) + int(text2_height * 1.5)
+            
+            # テキスト描画
+            cv2.putText(default_depth_image, text1, (text1_x, text1_y), 
+                       font_face, font_scale, (255, 255, 255), thickness)
+            cv2.putText(default_depth_image, text2, (text2_x, text2_y), 
+                       font_face, font_scale, (255, 255, 255), thickness)
+        else:
+            # 1行で十分な場合
+            # テキストの位置を計算（中央配置）
+            text_x = (width - text_width) // 2
+            text_y = (height + text_height) // 2
+            
+            # テキストを描画
+            cv2.putText(default_depth_image, text, (text_x, text_y), 
+                       font_face, font_scale, (255, 255, 255), thickness)
+    
     return default_depth_image
 
 def depth_to_color(depth_normalized):

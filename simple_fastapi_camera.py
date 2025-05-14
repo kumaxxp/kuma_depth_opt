@@ -632,21 +632,32 @@ def get_top_down_view_stream():
                 else:
                     point_count = point_cloud.shape[0]
                     print(f"[TopDownStream] Generated point cloud with {point_count} points")
+                    print(f"[TopDownStream] Point cloud data type: {point_cloud.dtype}, shape: {point_cloud.shape}")
                     
-                    # 点群の範囲を確認
+                    # 点群データの統計情報を追加
                     if point_count > 0:
+                        # XYZ座標の基本統計
                         x_min, x_max = np.min(point_cloud[:, 0]), np.max(point_cloud[:, 0])
                         y_min, y_max = np.min(point_cloud[:, 1]), np.max(point_cloud[:, 1])
                         z_min, z_max = np.min(point_cloud[:, 2]), np.max(point_cloud[:, 2])
                         print(f"[TopDownStream] Point cloud range - X: {x_min:.2f} to {x_max:.2f}m, Y: {y_min:.2f} to {y_max:.2f}m, Z: {z_min:.2f} to {z_max:.2f}m")
+                        
+                        # 値の分布を確認
+                        x_mean, y_mean, z_mean = np.mean(point_cloud[:, 0]), np.mean(point_cloud[:, 1]), np.mean(point_cloud[:, 2])
+                        print(f"[TopDownStream] Point cloud means - X: {x_mean:.2f}m, Y: {y_mean:.2f}m, Z: {z_mean:.2f}m")
+                        
+                        # Y値（高さ）の分布を詳しく確認（床検出に重要）
+                        y_percentiles = np.percentile(point_cloud[:, 1], [5, 25, 50, 75, 95])
+                        print(f"[TopDownStream] Height (Y) percentiles [5,25,50,75,95]: {y_percentiles}")
                     
                     # 占有グリッド生成
-                    print(f"[TopDownStream] Creating occupancy grid: resolution={grid_resolution}m, size={grid_width}x{grid_height}")
+                    print(f"[TopDownStream] Creating occupancy grid: resolution={grid_resolution}m, size={grid_width}x{grid_height}, height_threshold={height_threshold}m")
                     occupancy_grid = create_top_down_occupancy_grid(
                         point_cloud, 
                         grid_resolution=grid_resolution,
                         grid_width=grid_width,
-                        grid_height=grid_height
+                        grid_height=grid_height,
+                        height_threshold=height_threshold
                     )
                     
                     # 占有グリッドの視覚化
