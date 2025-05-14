@@ -183,14 +183,14 @@ def depth_to_color(depth_normalized):
     # HSVからBGRへの変換
     return cv2.cvtColor(np.uint8([[[hue, saturation, value]]]), cv2.COLOR_HSV2BGR)[0][0]
 
-def create_depth_grid_visualization(depth_grid_map, absolute_depth=None, cell_size=60): # 引数変更
+def create_depth_grid_visualization(depth_grid_map, absolute_depth=None, cell_size=40): # 引数と既定値変更
     """
     圧縮済みの深度グリッドマップの可視化を行う
     
     Args:
         depth_grid_map: 圧縮済みの深度グリッドマップ (rows, cols)
         absolute_depth: 絶対深度マップ（オプション、現在はグリッドセルごとの絶対深度表示に使用）
-        cell_size: セルサイズ（ピクセル）
+        cell_size: セルサイズ（ピクセル）- 小さくして表示を最適化
 
     Returns:
         グリッド可視化画像
@@ -246,8 +246,14 @@ def create_depth_grid_visualization(depth_grid_map, absolute_depth=None, cell_si
                         # この変換は仮のものです。実際の絶対深度の計算方法に合わせてください。
                         depth_val = 15.0 / depth_conv[i, j] 
                         text = f"{depth_val:.1f}m"
-                        cv2.putText(output, text, (x_start + 5, y_start + 30), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                        # 背景付きのテキストで視認性向上
+                        (text_width, text_height), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+                        text_bg_x1, text_bg_y1 = x_start + 3, y_start + 15 - text_height - 3
+                        text_bg_x2, text_bg_y2 = x_start + 3 + text_width + 6, y_start + 15 + 3
+                        
+                        cv2.rectangle(output, (text_bg_x1, text_bg_y1), (text_bg_x2, text_bg_y2), (0, 0, 0), -1)
+                        cv2.putText(output, text, (x_start + 5, y_start + 15), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
         # グリッド線を描画
         for i in range(rows + 1):

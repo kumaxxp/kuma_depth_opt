@@ -213,6 +213,13 @@ def create_top_down_occupancy_grid(points, grid_resolution=GRID_RESOLUTION,
         height_percentiles = np.percentile(height, [5, 25, 50, 75, 95])
         logger.debug(f"[OccGrid] Height percentiles [5,25,50,75,95]: {height_percentiles}")
         
+        # 高さの統計情報からしきい値を適応的に決定
+        # 5パーセンタイルを床判定の基準に、75パーセンタイルを障害物判定の基準に
+        adaptive_floor_threshold = height_percentiles[0] * 0.7  # 5パーセンタイルの70%を床の閾値に
+        adaptive_obstacle_threshold = height_percentiles[3] * 0.5  # 75パーセンタイルの50%を障害物閾値に
+        
+        logger.info(f"[OccGrid] Using adaptive thresholds - floor: {adaptive_floor_threshold:.3f}m, obstacle: {adaptive_obstacle_threshold:.3f}m")
+        
         # グリッド内の点のみを処理
         valid_idx = (grid_x >= 0) & (grid_x < grid_width) & (grid_y >= 0) & (grid_y < grid_height)
         valid_count = np.sum(valid_idx)
@@ -250,16 +257,34 @@ def create_top_down_occupancy_grid(points, grid_resolution=GRID_RESOLUTION,
             min_height = np.min(heights_array)
             max_height = np.max(heights_array)
             
-            # 高さの閾値を使って分類
-            # 床/天井の判定: min_height < -height_threshold または max_height > height_threshold
-            if min_height < -height_threshold or max_height > height_threshold:
-                # 床または通行可能な領域
+            # 高さの閾値を使って分類（圧縮データに合わせて最適化）
+            # 適応的に決定された閾値を使用
+            
+            # 高さの中央値と標準偏差を計算（ノイズに強い分析）
+            median_height = np.median(heights_array)
+            height_std = np.std(heights_array)
+            
+            # 床判定（低い位置にある点）- 適応的閾値を使用
+            if min_height < adaptive_floor_threshold:
+                # 床（床面の点を含むセル）= 通行可能
                 grid[y, x] = 2
-                logger.debug(f"[OccGrid] Cell ({x},{y}) classified as FREE: heights [{min_height:.2f} to {max_height:.2f}]")
-            else:
-                # 障害物（床より上、天井より下にある物体）
+                logger.debug(f"[OccGrid] Cell ({x},{y}) classified as FREE (floor): heights [{min_height:.2f} to {max_height:.2f}]")
+            # 高さのばらつきが大きい場合は障害物（表面が不均一な物体）
+            elif height_std > abs(adaptive_floor_threshold) * 0.5:
                 grid[y, x] = 1
-                logger.debug(f"[OccGrid] Cell ({x},{y}) classified as OBSTACLE: heights [{min_height:.2f} to {max_height:.2f}]")
+                logger.debug(f"[OccGrid] Cell ({x},{y}) classified as OBSTACLE (high variance: {height_std:.3f}): heights [{min_height:.2f} to {max_height:.2f}]")
+            # 中央値が閾値範囲内にある場合は床
+            elif median_height < adaptive_obstacle_threshold and median_height > adaptive_floor_threshold * 1.5:
+                grid[y, x] = 2
+                logger.debug(f"[OccGrid] Cell ({x},{y}) classified as FREE (median height): heights [{min_height:.2f} to {max_height:.2f}]")
+            # 上部に点が集中している場合は通行可能（高い位置の物体）
+            elif max_height > adaptive_obstacle_threshold * 3:
+                grid[y, x] = 2
+                logger.debug(f"[OccGrid] Cell ({x},{y}) classified as FREE (high object): heights [{min_height:.2f} to {max_height:.2f}]")
+            else:
+                # それ以外は障害物と判定
+                grid[y, x] = 1
+                logger.debug(f"[OccGrid] Cell ({x},{y}) classified as OBSTACLE (default): heights [{min_height:.2f} to {max_height:.2f}]")
         
         # グリッドの簡単な統計
         unknown_cells = np.sum(grid == 0)
@@ -314,9 +339,9 @@ def visualize_occupancy_grid(occupancy_grid, scale_factor=5):
         
         # 色の定義 (BGR) - 視認性を高めるためにコントラストを強調
         colors = {
-            0: [80, 80, 80],     # 不明領域: 暗いグレー
-            1: [0, 50, 220],     # 障害物: より明るい赤色
-            2: [30, 220, 30]     # 通行可能: より明るい緑色
+            0: [50, 50, 50],     # 不明領域: 暗いグレー
+            1: [0, 0, 255],      # 障害物: より明るい赤色
+            2: [0, 255, 0]       # 通行可能: より明るい緑色
         }
         
         # グリッドの内容を描画（ベクトル化処理で高速化）

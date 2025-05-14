@@ -550,11 +550,11 @@ def get_top_down_view_stream():
         print(f"[TopDownStream] Warning: Failed to create keep-alive frame: {e}")
     
     # 圧縮データに合わせたパラメータ設定
-    scaling_factor = 15.0  # 深度スケーリング係数
-    grid_resolution = 0.1 * 20  # 圧縮データ用にグリッド解像度を調整（元の解像度 * 圧縮率）
-    grid_width = 30       # グリッドの幅（セル数）
-    grid_height = 30      # グリッドの高さ（セル数）
-    height_threshold = 0.3 * 20  # 圧縮データに合わせて閾値調整（元の閾値 * 圧縮率）
+    scaling_factor = 10.0  # 深度スケーリング係数を低く調整（より近い範囲を対象に）
+    grid_resolution = 0.08  # グリッドの解像度（メートル/セル）- より細かく
+    grid_width = 60       # グリッドの幅（セル数）- より広い範囲をカバー
+    grid_height = 60      # グリッドの高さ（セル数）- より広い範囲をカバー
+    height_threshold = 0.2  # 圧縮データに合わせて閾値調整（低くして床検出を改善）
     
     # グローバル変数の状態確認
     print("[TopDownStream] グローバル変数状態チェック:")
@@ -616,12 +616,17 @@ def get_top_down_view_stream():
                 
                 # 点群生成（圧縮データ用に調整）
                 print(f"[TopDownStream] Generating point cloud directly from compressed grid")
+                # カメラパラメータを圧縮率に合わせて調整し、広い視野角をカバー
+                adjusted_fx = FX/GRID_COMPRESSION_SIZE[1]*grid_cols * 0.8  # 視野角を広く
+                adjusted_fy = FY/GRID_COMPRESSION_SIZE[0]*grid_rows * 0.8  # 視野角を広く
+                print(f"[TopDownStream] Adjusted camera parameters: fx={adjusted_fx}, fy={adjusted_fy}")
+                
                 point_cloud = depth_to_point_cloud(
                     absolute_depth_grid,
-                    fx=FX/GRID_COMPRESSION_SIZE[1]*grid_cols, # カメラパラメータを圧縮率で調整
-                    fy=FY/GRID_COMPRESSION_SIZE[0]*grid_rows,
+                    fx=adjusted_fx,
+                    fy=adjusted_fy,
                     cx=grid_cols/2.0,  # 圧縮グリッドの中心点
-                    cy=grid_rows/2.0,
+                    cy=grid_rows/2.0, 
                     is_grid_data=True,
                     original_height=GRID_COMPRESSION_SIZE[0],
                     original_width=GRID_COMPRESSION_SIZE[1],
@@ -650,6 +655,11 @@ def get_top_down_view_stream():
                         print(f"[TopDownStream] Height (Y) percentiles [5,25,50,75,95]: {y_percentiles}")
                     
                     # 占有グリッド生成（圧縮データに合わせてパラメータ調整）
+                    # 高さの分布情報をログ出力して分類のための情報を提供
+                    if point_count > 0:
+                        height_percentiles_topdown = np.percentile(point_cloud[:, 1], [5, 25, 50, 75, 95])
+                        print(f"[TopDownStream] Height percentiles for classification: {height_percentiles_topdown}")
+                    
                     print(f"[TopDownStream] Creating occupancy grid: resolution={grid_resolution}m, size={grid_width}x{grid_height}, height_threshold={height_threshold}m")
                     occupancy_grid = create_top_down_occupancy_grid(
                         point_cloud, 
