@@ -1,4 +1,4 @@
-# Kuma Depth Nav
+# Kuma Depth Opt
 
 リアルタイムカメラの深度推定とストリーミングを行うFastAPIベースのウェブアプリケーションです。
 
@@ -12,11 +12,14 @@
 ## ディレクトリ構成
 
 ```
-kuma_depth_nav/
+kuma_depth_opt/
 ├── config.json                # アプリケーション設定ファイル
+├── readme.md                  # このREADMEファイル
 ├── requirements.txt           # 依存パッケージリスト
 ├── simple_fastapi_camera.py   # メインアプリケーションファイル
 ├── utils.py                   # ユーティリティ関数
+├── __pycache__/               # Pythonキャッシュディレクトリ
+│   └── utils.cpython-310.pyc  # コンパイル済みPythonファイル
 └── depth_processor/           # 深度処理モジュール
     ├── __init__.py            # モジュール初期化
     ├── depth_model.py         # 深度推定モデルの実装
@@ -59,11 +62,12 @@ http://localhost:8888
 
 ## インターフェース説明
 
-Webインターフェースには以下の3つのビューがあります：
+Webインターフェースには以下の4つのビューがあります：
 
 1. **Camera Stream** - 通常のカメラ映像
 2. **Depth Map** - 深度推定のヒートマップ表示
 3. **Depth Grid** - 深度をグリッド形式で表示
+4. **Top-Down View** - 3D空間を俯瞰した上からの視点表示
 
 また、パフォーマンス統計情報（FPSと遅延時間）も表示されます。
 

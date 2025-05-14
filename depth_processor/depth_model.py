@@ -276,28 +276,46 @@ def initialize_depth_model(model_path=None):
     """
     return DepthProcessor(model_path)
 
-def convert_to_absolute_depth(depth_map, scaling_factor=15.0):
+def convert_to_absolute_depth(depth_map, scaling_factor=15.0, depth_scale=1.0):
     """
     相対深度マップを絶対深度マップ（メートル単位）に変換します
     
     Args:
         depth_map (numpy.ndarray): 相対深度マップ（0-1の範囲）
         scaling_factor (float): スケーリング係数（キャリブレーションで決定）
+        depth_scale (float): スケーリング補正値
         
     Returns:
         numpy.ndarray: 絶対深度マップ（メートル単位）
     """
-    # 深度マップがゼロに近い値を持つ場所を処理（ゼロ除算防止）
-    valid_mask = depth_map > 0.01
-    
-    # 絶対深度マップの初期化
-    absolute_depth = np.zeros_like(depth_map)
-    
-    # スケーリング係数を用いて相対深度から絶対深度を計算
-    # 深度値が大きいほど近いという判定に合わせる
-    # depth_mapの中から最も大きな値をnear_pointとして取得
-    near_point = np.max(depth_map[valid_mask])
-
-    absolute_depth[valid_mask] = scaling_factor / (near_point-depth_map[valid_mask] )
-    
-    return absolute_depth
+    try:
+        if depth_map is None or depth_map.size == 0:
+            print("Error: Empty depth map in convert_to_absolute_depth")
+            return np.zeros((1, 1), dtype=np.float32)  # 安全に空の配列を返す
+            
+        # 深度マップがゼロに近い値を持つ場所を処理（ゼロ除算防止）
+        valid_mask = depth_map > 0.01
+        
+        if np.sum(valid_mask) == 0:  # 有効なピクセルがない
+            print("Warning: No valid depth values found")
+            return np.zeros_like(depth_map)  # 全て0の配列を返す
+            
+        # 絶対深度マップの初期化
+        absolute_depth = np.zeros_like(depth_map)
+        
+        # スケーリング係数を用いて相対深度から絶対深度を計算
+        # 深度値が大きいほど近いという判定に合わせる
+        near_point = np.max(depth_map[valid_mask])
+        
+        # 安全な計算のためにゼロ除算を防止
+        diff = near_point - depth_map[valid_mask]
+        # 微小値で置き換えて除算
+        diff[diff < 0.001] = 0.001
+        
+        absolute_depth[valid_mask] = scaling_factor * depth_scale / diff
+        
+        return absolute_depth
+        
+    except Exception as e:
+        print(f"Error in convert_to_absolute_depth: {str(e)}")
+        return np.zeros_like(depth_map)  # エラー時は全て0の配列を返す

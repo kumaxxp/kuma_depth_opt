@@ -480,6 +480,10 @@ def get_top_down_view_stream():
     grid_height = 100      # グリッドの高さ（セル数）
     height_threshold = 0.3 # 通行可能と判定する高さの閾値（メートル）
     
+    # エラーカウンター
+    error_count = 0
+    last_error_time = 0
+    
     while True:
         current_grid_data = None
         current_raw_depth_map = None # ★ 元の深度マップも取得するため追加
@@ -489,80 +493,81 @@ def get_top_down_view_stream():
                 current_grid_data = latest_depth_grid.copy()
             if latest_depth_map is not None: # ★ 元の深度マップも取得
                 current_raw_depth_map = latest_depth_map.copy()
-
+        
         if current_grid_data is None or current_raw_depth_map is None:
-            print("[TopDownStream] Waiting for grid or raw depth map...") # DEBUG
-            time.sleep(0.01)
+            # デバッグ情報を表示するのは時々のみに
+            current_time = time.time()
+            if current_time - last_error_time > 5:  # 5秒ごとに表示
+                print("[TopDownStream] Waiting for grid or raw depth map...")
+                last_error_time = current_time
+            time.sleep(0.1)  # 待機時間を長めに
+            
+            # "No Data" 画像を生成して送信
+            error_count += 1
+            if error_count > 10:  # データがない状態が続いたら
+                vis_img = create_default_depth_image(width=320, height=240, text="Top-Down View: No Data")
+                ret, buffer = cv2.imencode('.jpg', vis_img, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                if ret:
+                    yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                error_count = 0  # リセット
             continue
         
-        # DEBUG: Print shape of initial data
-        print(f"[TopDownStream] current_grid_data shape: {current_grid_data.shape}, current_raw_depth_map shape: {current_raw_depth_map.shape}")
+        try:
+            start_time_vis = time.perf_counter()
 
+            # 圧縮グリッドデータを絶対深度に変換
+            original_height, original_width = current_raw_depth_map.shape[:2]
 
-        start_time_vis = time.perf_counter()
-
-        # 圧縮グリッドデータを絶対深度に変換
-        # 元の深度マップの形状から original_height と original_width を取得
-        # これは compress_depth_to_grid で使用された raw_depth_map の形状であるべき
-        # latest_depth_map が predict から返される raw_depth_map そのものであると仮定
-        original_height, original_width = current_raw_depth_map.shape[:2]
-
-        # convert_to_absolute_depth に渡すのは圧縮グリッドデータ
-        absolute_depth_grid = convert_to_absolute_depth(current_grid_data, depth_scale=1.0) # depth_scale は仮
-        
-        # DEBUG: Print info about absolute_depth_grid
-        if absolute_depth_grid is not None:
-            print(f"[TopDownStream] absolute_depth_grid shape: {absolute_depth_grid.shape}, min: {np.min(absolute_depth_grid)}, max: {np.max(absolute_depth_grid)}")
-        else:
-            print("[TopDownStream] absolute_depth_grid is None")
-
-
-        # 点群生成 (圧縮グリッドから)
-        point_cloud = depth_to_point_cloud(
-            absolute_depth_grid,
-            fx=FX, fy=FY, cx=CX, cy=CY,
-            is_grid_data=True,
-            original_height=original_height, # 元の深度マップの高さ
-            original_width=original_width,   # 元の深度マップの幅
-            grid_rows=GRID_COMPRESSION_SIZE[0],
-            grid_cols=GRID_COMPRESSION_SIZE[1]
-        )
-
-        # DEBUG: Print info about point_cloud
-        if point_cloud is not None and point_cloud.size > 0:
-            print(f"[TopDownStream] point_cloud shape: {point_cloud.shape}, first 3 points: \n{point_cloud[:3]}")
-        elif point_cloud is not None:
-            print("[TopDownStream] point_cloud is empty")
-        else:
-            print("[TopDownStream] point_cloud is None")
+            # エラーハンドリングを追加した convert_to_absolute_depth 関数を使用
+            absolute_depth_grid = convert_to_absolute_depth(
+                current_grid_data, 
+                scaling_factor=15.0,
+                depth_scale=1.0
+            )
+            
+            # 点群生成 (圧縮グリッドから)
+            try:
+                point_cloud = depth_to_point_cloud(
+                    absolute_depth_grid,
+                    fx=FX, fy=FY, cx=CX, cy=CY,
+                    is_grid_data=True,
+                    original_height=original_height,
+                    original_width=original_width,
+                    grid_rows=GRID_COMPRESSION_SIZE[0],
+                    grid_cols=GRID_COMPRESSION_SIZE[1]
+                )
+            except Exception as e:
+                print(f"[TopDownStream] Error in depth_to_point_cloud: {str(e)}")
+                point_cloud = None
+                
+            error_count = 0  # リセット（正常に処理できた）
+                
+        except Exception as e:
+            print(f"[TopDownStream] Error processing depth data: {str(e)}")
+            point_cloud = None
 
 
         if point_cloud is None or point_cloud.size == 0:
-            print("[TopDownStream] No point cloud generated or point cloud is empty.")
-            vis_img = create_default_depth_image(width=320, height=240, text="No Point Cloud")
+            # ポイントクラウドが生成できない場合はデフォルト画像を表示
+            vis_img = create_default_depth_image(width=320, height=240, text="Top-Down View: Processing...")
         else:
-            print(f"[TopDownStream] Point cloud generated with {point_cloud.shape[0]} points.")
-            # 占有グリッド生成
-            occupancy_grid = create_top_down_occupancy_grid(
-                point_cloud,
-                grid_resolution=0.1, # 10cm per cell
-                grid_size_m=(10.0, 10.0) # 10m x 10m grid
-            )
-            # DEBUG: Print info about occupancy_grid
-            if occupancy_grid is not None:
-                print(f"[TopDownStream] occupancy_grid shape: {occupancy_grid.shape}, unique values: {np.unique(occupancy_grid, return_counts=True)}")
-            else:
-                print("[TopDownStream] occupancy_grid is None")
-
-            # print(f"[TopDown] Occupancy grid created with shape: {occupancy_grid.shape}")
-            # 占有グリッド視覚化 (スケールファクターを適用)
-            vis_img = visualize_occupancy_grid(occupancy_grid, scale_factor=3) # スケールを3に調整
-            # print(f"[TopDown] Occupancy grid visualized with shape: {vis_img.shape}")
-            # DEBUG: Print info about vis_img after visualize_occupancy_grid
-            if vis_img is not None:
-                print(f"[TopDownStream] vis_img after visualize_occupancy_grid shape: {vis_img.shape}")
-            else:
-                print("[TopDownStream] vis_img after visualize_occupancy_grid is None")
+            try:
+                # 占有グリッド生成
+                occupancy_grid = create_top_down_occupancy_grid(
+                    point_cloud,
+                    grid_resolution=0.1, # 10cm per cell
+                    grid_width=100,      # グリッド幅（セル数）
+                    grid_height=100      # グリッド高さ（セル数）
+                )
+                
+                if occupancy_grid is not None and occupancy_grid.size > 0:
+                    # 占有グリッド視覚化（スケールファクターを適用）
+                    vis_img = visualize_occupancy_grid(occupancy_grid, scale_factor=3)
+                else:
+                    vis_img = create_default_depth_image(width=320, height=240, text="Top-Down View: Invalid Grid")
+            except Exception as e:
+                print(f"[TopDownStream] Error creating occupancy grid: {str(e)}")
+                vis_img = create_default_depth_image(width=320, height=240, text="Top-Down View: Error")
 
 
         if vis_img is None or len(vis_img.shape) < 2:
