@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-ビジュアライゼーションでの日本語文字化けを修正するユーティリティ
+Fix text encoding issues in visualizations
 """
 
 import matplotlib.pyplot as plt
@@ -14,36 +14,17 @@ import sys
 
 def setup_matplotlib_ja():
     """
-    matplotlibで日本語を表示できるように設定します。
+    Configure matplotlib for proper text display in all environments
     """
-    print("日本語フォント設定を適用中...")
+    print("Configuring fonts for text display...")
+      # Use a simpler approach that works with most environments
+    # Use English text for all labels to ensure compatibility
     
-    # フォントファイルを探す
-    font_dirs = []
-    
-    # Windowsの場合
-    if os.name == 'nt':
-        font_dirs = [
-            r'C:\Windows\Fonts',
-            os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Microsoft', 'Windows', 'Fonts')
-        ]
-    # macOSの場合
-    elif sys.platform == 'darwin':
-        font_dirs = [
-            '/System/Library/Fonts',
-            '/Library/Fonts',
-            os.path.expanduser('~/Library/Fonts')
-        ]
-    # Linuxの場合
-    else:
-        font_dirs = [
-            '/usr/share/fonts',
-            '/usr/local/share/fonts',
-            os.path.expanduser('~/.fonts')
-        ]
-    
-    # 一般的な日本語フォント名
-    ja_font_names = ['Yu Gothic', 'MS Gothic', 'Meiryo', 'Noto Sans CJK JP', 'IPAGothic', 'IPAPGothic', 'VL Gothic', 'Takao Gothic']
+    # Basic matplotlib configuration for better display
+    matplotlib.rcParams.update({
+        'font.sans-serif': ['DejaVu Sans', 'Arial', 'Helvetica', 'sans-serif'],
+        'axes.unicode_minus': False  # Ensure minus signs display correctly
+    })
     
     # フォントファミリーを探す
     font_found = False
