@@ -197,8 +197,14 @@ def create_top_down_occupancy_grid(points, grid_resolution=GRID_RESOLUTION,
         # Y軸（上下）は高さとして使用
         height = points[:, 1]
         
+        # 処理前にグリッドの範囲を確認
+        logger.debug(f"[OccGrid] Grid X range: {np.min(grid_x)} to {np.max(grid_x)}, Grid Y range: {np.min(grid_y)} to {np.max(grid_y)}")
+        logger.debug(f"[OccGrid] Height range: {np.min(height)} to {np.max(height)}")
+        
         # グリッド内の点のみを処理
         valid_idx = (grid_x >= 0) & (grid_x < grid_width) & (grid_y >= 0) & (grid_y < grid_height)
+        valid_count = np.sum(valid_idx)
+        logger.debug(f"[OccGrid] Valid points in grid: {valid_count}/{points.shape[0]} ({valid_count/points.shape[0]*100:.1f}%)")
         if np.sum(valid_idx) == 0:
             logger.warning("[OccGrid] No points fall within grid bounds")
             return grid
@@ -252,6 +258,11 @@ def visualize_occupancy_grid(occupancy_grid, scale_factor=5):
         if occupancy_grid is None or not isinstance(occupancy_grid, np.ndarray) or occupancy_grid.size == 0:
             logger.warning("[OccVis] Invalid occupancy grid")
             return np.zeros((240, 320, 3), dtype=np.uint8)
+        
+        # グリッドの統計を出力
+        unique_values, counts = np.unique(occupancy_grid, return_counts=True)
+        stats = {val: count for val, count in zip(unique_values, counts)}
+        logger.debug(f"[OccVis] Occupancy grid stats: {stats}")
         
         # グリッドのサイズ
         grid_h, grid_w = occupancy_grid.shape

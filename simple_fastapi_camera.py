@@ -552,9 +552,13 @@ def get_top_down_view_stream():
                 print(f"[TopDownStream] Processing depth data: grid={current_grid_data.shape}, raw={current_raw_depth_map.shape}")
                 
                 # 絶対深度へ変換
+                print(f"[TopDownStream] Converting grid to absolute depth with scaling_factor={scaling_factor}")
                 absolute_depth_grid = convert_to_absolute_depth(current_grid_data, scaling_factor=scaling_factor)
+                if absolute_depth_grid is not None:
+                    print(f"[TopDownStream] Absolute depth range: {np.min(absolute_depth_grid):.2f}m to {np.max(absolute_depth_grid):.2f}m")
                 
                 # 点群生成
+                print(f"[TopDownStream] Generating point cloud with camera parameters: fx={FX}, fy={FY}, cx={CX}, cy={CY}")
                 point_cloud = depth_to_point_cloud(
                     absolute_depth_grid,
                     fx=FX, fy=FY, cx=CX, cy=CY,
@@ -570,7 +574,15 @@ def get_top_down_view_stream():
                     print("[TopDownStream] No valid points in point cloud")
                     vis_img = create_default_depth_image(width=320, height=240, text="No Valid Point Cloud")
                 else:
-                    print(f"[TopDownStream] Generated point cloud with {point_cloud.shape[0]} points")
+                    point_count = point_cloud.shape[0]
+                    print(f"[TopDownStream] Generated point cloud with {point_count} points")
+                    
+                    # 点群の範囲を確認
+                    if point_count > 0:
+                        x_min, x_max = np.min(point_cloud[:, 0]), np.max(point_cloud[:, 0])
+                        y_min, y_max = np.min(point_cloud[:, 1]), np.max(point_cloud[:, 1])
+                        z_min, z_max = np.min(point_cloud[:, 2]), np.max(point_cloud[:, 2])
+                        print(f"[TopDownStream] Point cloud range - X: {x_min:.2f} to {x_max:.2f}m, Y: {y_min:.2f} to {y_max:.2f}m, Z: {z_min:.2f} to {z_max:.2f}m")
                     
                     # 占有グリッド生成
                     occupancy_grid = create_top_down_occupancy_grid(
