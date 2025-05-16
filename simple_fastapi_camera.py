@@ -14,27 +14,27 @@ from depth_processor.visualization import create_default_depth_image
 # 天頂視点マップ用の関数をインポート
 from depth_processor import convert_to_absolute_depth, depth_to_point_cloud, create_top_down_occupancy_grid, visualize_occupancy_grid
 
-# FastAPIのライフサイクル管理を最新のasynccontextmanagerに変更
+# FastAPI lifecycle management using asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """アプリケーションのライフサイクル管理"""
-    # 起動時の処理
-    print("アプリケーション起動: カメラとスレッドを初期化します")
-    # スレッドは既にグローバルで開始されているので、ここでは何もしない
+    """Application lifecycle management"""
+    # Startup processes
+    print("Application startup: Initializing camera and threads")
+    # Threads are already started globally, so nothing to do here
     
-    yield  # アプリケーション実行中
+    yield  # During application runtime
     
-    # 終了時の処理
-    print("アプリケーション終了: リソースを解放します")
+    # Shutdown processes
+    print("Application shutdown: Releasing resources")
     try:
-        # カメラのクリーンアップ
+        # Camera cleanup
         if cap is not None:
             cap.release()
-            print("カメラリソースを解放しました")
+            print("Camera resources released")
     except Exception as e:
-        print(f"終了処理中のエラー: {e}")
+        print(f"Error during shutdown: {e}")
 
-# FastAPIアプリケーションをlifespanコンテキストマネージャーで初期化
+# Initialize FastAPI application with lifespan context manager
 app = FastAPI(lifespan=lifespan)
 
 cap = cv2.VideoCapture(0)
@@ -42,40 +42,40 @@ cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'YUYV'))
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
-# カメラバッファ設定とエラー処理を追加
-cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # バッファサイズを最小に
-cap.set(cv2.CAP_PROP_FPS, 30)        # カメラのFPS設定
+# Set camera buffer and error handling
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffer size
+cap.set(cv2.CAP_PROP_FPS, 30)        # Set camera FPS
 
-# カメラの接続状態を確認
+# Check camera connection status
 if not cap.isOpened():
-    print("エラー: カメラに接続できません")
+    print("ERROR: Could not connect to camera")
     import sys
     sys.exit(1)
 else:
-    print(f"カメラ接続成功: {int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}")
+    print(f"Camera connected successfully: {int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}")
 
 depth_processor = DepthProcessor()
 
-# 共有メモリを拡張
+# Expand shared memory
 latest_depth_map = None
 latest_camera_frame = None
-latest_depth_grid = None # ★追加: 圧縮済み深度グリッド用
+latest_depth_grid = None # Added: for compressed depth grid
 frame_timestamp = 0
-depth_map_lock = threading.Lock() # latest_depth_map, latest_camera_frame, latest_depth_grid の保護用
+depth_map_lock = threading.Lock() # Protection for latest_depth_map, latest_camera_frame, latest_depth_grid
 last_inference_time = 0
 INFERENCE_INTERVAL = 0.08
-GRID_COMPRESSION_SIZE = (12, 16) # グリッド圧縮サイズ (rows, cols)
+GRID_COMPRESSION_SIZE = (12, 16) # Grid compression size (rows, cols)
 
-# カメラ内部パラメータ (仮の値 - 実際にはキャリブレーションで取得)
-# raw_depth_map (256x384) に対応する値を想定
+# Camera internal parameters (approximate values - actually obtained by calibration)
+# Values corresponding to raw_depth_map (256x384)
 ORIGINAL_DEPTH_HEIGHT = 256
 ORIGINAL_DEPTH_WIDTH = 384
-FX = 332.5  # 例: 384 / (2 * tan(60deg_hfov / 2))
-FY = 309.0  # 例: 256 / (2 * tan(45deg_vfov / 2))
+FX = 332.5  # Example: 384 / (2 * tan(60deg_hfov / 2))
+FY = 309.0  # Example: 256 / (2 * tan(45deg_vfov / 2))
 CX = ORIGINAL_DEPTH_WIDTH / 2.0
 CY = ORIGINAL_DEPTH_HEIGHT / 2.0
 
-# カメラキャプチャ専用スレッド（修正）
+# Camera capture dedicated thread (modified)
 def camera_capture_thread():
     global latest_camera_frame, frame_timestamp
     consecutive_errors = 0
@@ -88,13 +88,13 @@ def camera_capture_thread():
                 with depth_map_lock:
                     latest_camera_frame = frame.copy()
                     frame_timestamp = time.time()
-                consecutive_errors = 0  # エラーカウンタをリセット
+                consecutive_errors = 0  # Reset error counter
             else:
                 consecutive_errors += 1
-                print(f"カメラ読み取りエラー ({consecutive_errors}/{max_errors})")
+                print(f"Camera read error ({consecutive_errors}/{max_errors})")
                 
                 if consecutive_errors >= max_errors:
-                    print("カメラをリセットします...")
+                    print("Resetting camera...")
                     cap.release()
                     time.sleep(1.0)
                     cap.open(0)
@@ -109,20 +109,20 @@ def camera_capture_thread():
             
         time.sleep(0.05)  # 20FPSを維持
 
-# 処理時間計測用
+# For processing time measurement
 camera_times = deque(maxlen=1000)
 inference_times = deque(maxlen=1000)
-compression_times = deque(maxlen=1000) # ★追加: 圧縮時間用
+compression_times = deque(maxlen=1000) # Added: for compression time
 visualization_times = deque(maxlen=1000)
 encoding_times = deque(maxlen=1000)
 
-# パフォーマンス統計用の変数を追加
+# Add variables for performance statistics
 fps_stats = {
     "camera": deque(maxlen=30),
     "depth": deque(maxlen=30),
     "grid": deque(maxlen=30),
     "inference": deque(maxlen=30),
-    "compression": deque(maxlen=30), # ★追加: 圧縮FPS用
+    "compression": deque(maxlen=30), # Added: for compression FPS
     "top_down": deque(maxlen=30)
 }
 last_frame_times = {
@@ -549,18 +549,18 @@ def get_top_down_view_stream():
     except Exception as e:
         print(f"[TopDownStream] Warning: Failed to create keep-alive frame: {e}")
     
-    # 設定パラメータ
-    scaling_factor = 15.0  # 深度スケーリング係数
-    grid_resolution = 0.1  # グリッドの解像度（メートル/セル）
-    grid_width = 100       # グリッドの幅（セル数）
-    grid_height = 100      # グリッドの高さ（セル数）
-    height_threshold = 0.3 # 通行可能と判定する高さの閾値（メートル）
+    # 圧縮データに合わせたパラメータ設定
+    scaling_factor = 10.0  # 深度スケーリング係数を低く調整（より近い範囲を対象に）
+    grid_resolution = 0.08  # グリッドの解像度（メートル/セル）- より細かく
+    grid_width = 60       # グリッドの幅（セル数）- より広い範囲をカバー
+    grid_height = 60      # グリッドの高さ（セル数）- より広い範囲をカバー
+    height_threshold = 0.2  # 圧縮データに合わせて閾値調整（低くして床検出を改善）
     
     # グローバル変数の状態確認
     print("[TopDownStream] グローバル変数状態チェック:")
     print(f"[TopDownStream] GRID_COMPRESSION_SIZE: {GRID_COMPRESSION_SIZE}")
     print(f"[TopDownStream] Camera Parameters: FX={FX}, FY={FY}, CX={CX}, CY={CY}")
-    print(f"[TopDownStream] ORIGINAL_DEPTH_HEIGHT: {ORIGINAL_DEPTH_HEIGHT}, ORIGINAL_DEPTH_WIDTH: {ORIGINAL_DEPTH_WIDTH}")
+    print(f"[TopDownStream] 圧縮処理に合わせたパラメータ: grid_resolution={grid_resolution}, height_threshold={height_threshold}")
     
     # エラーカウンター
     error_count = 0
@@ -573,17 +573,14 @@ def get_top_down_view_stream():
     
     # メインループ
     while True:
-        current_grid_data = None
-        current_raw_depth_map = None
+        current_compressed_grid = None
 
         try:
             with depth_map_lock:
                 if latest_depth_grid is not None:
-                    current_grid_data = latest_depth_grid.copy()
-                if latest_depth_map is not None:
-                    current_raw_depth_map = latest_depth_map.copy()
+                    current_compressed_grid = latest_depth_grid.copy()
             
-            if current_grid_data is None or current_raw_depth_map is None:
+            if current_compressed_grid is None:
                 # データがない場合は待機して「No Data」画像を送信
                 current_time = time.time()
                 if current_time - last_error_time > 5:  # 5秒ごとにログ出力
@@ -603,26 +600,38 @@ def get_top_down_view_stream():
             start_time_vis = time.perf_counter()
             
             try:
-                # 圧縮グリッドデータを絶対深度に変換
-                original_height, original_width = current_raw_depth_map.shape[:2]
-                print(f"[TopDownStream] Processing depth data: grid={current_grid_data.shape}, raw={current_raw_depth_map.shape}")
+                # 圧縮グリッドデータのサイズを取得
+                grid_rows, grid_cols = current_compressed_grid.shape[:2]
+                print(f"[TopDownStream] Processing compressed grid data of shape: {current_compressed_grid.shape}")
                 
-                # 絶対深度へ変換
+                # 絶対深度へ変換（圧縮データ用パラメータ指定）
                 print(f"[TopDownStream] Converting grid to absolute depth with scaling_factor={scaling_factor}")
-                absolute_depth_grid = convert_to_absolute_depth(current_grid_data, scaling_factor=scaling_factor)
+                absolute_depth_grid = convert_to_absolute_depth(
+                    current_compressed_grid, 
+                    scaling_factor=scaling_factor, 
+                    is_compressed_grid=True
+                )
                 if absolute_depth_grid is not None:
                     print(f"[TopDownStream] Absolute depth range: {np.min(absolute_depth_grid):.2f}m to {np.max(absolute_depth_grid):.2f}m")
                 
-                # 点群生成
-                print(f"[TopDownStream] Generating point cloud with camera parameters: fx={FX}, fy={FY}, cx={CX}, cy={CY}")
+                # 点群生成（圧縮データ用に調整）
+                print(f"[TopDownStream] Generating point cloud directly from compressed grid")
+                # カメラパラメータを圧縮率に合わせて調整し、広い視野角をカバー
+                adjusted_fx = FX/GRID_COMPRESSION_SIZE[1]*grid_cols * 0.8  # 視野角を広く
+                adjusted_fy = FY/GRID_COMPRESSION_SIZE[0]*grid_rows * 0.8  # 視野角を広く
+                print(f"[TopDownStream] Adjusted camera parameters: fx={adjusted_fx}, fy={adjusted_fy}")
+                
                 point_cloud = depth_to_point_cloud(
                     absolute_depth_grid,
-                    fx=FX, fy=FY, cx=CX, cy=CY,
+                    fx=adjusted_fx,
+                    fy=adjusted_fy,
+                    cx=grid_cols/2.0,  # 圧縮グリッドの中心点
+                    cy=grid_rows/2.0, 
                     is_grid_data=True,
-                    original_height=original_height,
-                    original_width=original_width,
-                    grid_rows=GRID_COMPRESSION_SIZE[0],
-                    grid_cols=GRID_COMPRESSION_SIZE[1]
+                    original_height=GRID_COMPRESSION_SIZE[0],
+                    original_width=GRID_COMPRESSION_SIZE[1],
+                    grid_rows=grid_rows,
+                    grid_cols=grid_cols
                 )
                 
                 # 点群から占有グリッド生成
@@ -631,8 +640,7 @@ def get_top_down_view_stream():
                     vis_img = create_default_depth_image(width=320, height=240, text="No Valid Point Cloud")
                 else:
                     point_count = point_cloud.shape[0]
-                    print(f"[TopDownStream] Generated point cloud with {point_count} points")
-                    print(f"[TopDownStream] Point cloud data type: {point_cloud.dtype}, shape: {point_cloud.shape}")
+                    print(f"[TopDownStream] Generated point cloud with {point_count} points from compressed grid")
                     
                     # 点群データの統計情報を追加
                     if point_count > 0:
@@ -642,15 +650,16 @@ def get_top_down_view_stream():
                         z_min, z_max = np.min(point_cloud[:, 2]), np.max(point_cloud[:, 2])
                         print(f"[TopDownStream] Point cloud range - X: {x_min:.2f} to {x_max:.2f}m, Y: {y_min:.2f} to {y_max:.2f}m, Z: {z_min:.2f} to {z_max:.2f}m")
                         
-                        # 値の分布を確認
-                        x_mean, y_mean, z_mean = np.mean(point_cloud[:, 0]), np.mean(point_cloud[:, 1]), np.mean(point_cloud[:, 2])
-                        print(f"[TopDownStream] Point cloud means - X: {x_mean:.2f}m, Y: {y_mean:.2f}m, Z: {z_mean:.2f}m")
-                        
                         # Y値（高さ）の分布を詳しく確認（床検出に重要）
                         y_percentiles = np.percentile(point_cloud[:, 1], [5, 25, 50, 75, 95])
                         print(f"[TopDownStream] Height (Y) percentiles [5,25,50,75,95]: {y_percentiles}")
                     
-                    # 占有グリッド生成
+                    # 占有グリッド生成（圧縮データに合わせてパラメータ調整）
+                    # 高さの分布情報をログ出力して分類のための情報を提供
+                    if point_count > 0:
+                        height_percentiles_topdown = np.percentile(point_cloud[:, 1], [5, 25, 50, 75, 95])
+                        print(f"[TopDownStream] Height percentiles for classification: {height_percentiles_topdown}")
+                    
                     print(f"[TopDownStream] Creating occupancy grid: resolution={grid_resolution}m, size={grid_width}x{grid_height}, height_threshold={height_threshold}m")
                     occupancy_grid = create_top_down_occupancy_grid(
                         point_cloud, 
@@ -666,7 +675,7 @@ def get_top_down_view_stream():
                         unique_values = np.unique(occupancy_grid)
                         print(f"[TopDownStream] Grid values: {unique_values}")
                         
-                        vis_img = visualize_occupancy_grid(occupancy_grid, scale_factor=3)
+                        vis_img = visualize_occupancy_grid(occupancy_grid, scale_factor=6)
                         print(f"[TopDownStream] Occupancy grid visualized: {vis_img.shape}")
                     else:
                         print("[TopDownStream] Failed to create occupancy grid")
@@ -725,11 +734,11 @@ def get_top_down_view_stream():
         
         # フレームレート制御
         time.sleep(0.1)  # 10 FPS 程度に制限（Top-Down処理は重いため）
-# 例外ハンドリングを強化
+# Enhance exception handling
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
-    error_msg = f"予期せぬエラーが発生しました: {str(exc)}"
-    print(f"[エラー] {error_msg}")
+    error_msg = f"An unexpected error occurred: {str(exc)}"
+    print(f"[ERROR] {error_msg}")
     import traceback
     print(traceback.format_exc())
     
@@ -744,8 +753,8 @@ if __name__ == "__main__":
     try:
         uvicorn.run(app, host="0.0.0.0", port=8888)
     except KeyboardInterrupt:
-        print("Ctrl+Cが押されました。アプリケーションを終了します。")
+        print("Ctrl+C pressed. Shutting down the application.")
     except Exception as e:
-        print(f"予期せぬエラーでアプリケーションが終了しました: {e}")
+        print(f"Application terminated due to unexpected error: {e}")
         import traceback
         print(traceback.format_exc())

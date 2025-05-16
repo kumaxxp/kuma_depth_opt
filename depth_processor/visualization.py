@@ -1,27 +1,30 @@
 """
-深度マップの可視化関連機能
+Depth map visualization functions
 """
 
 import cv2
 import numpy as np
 import logging
 
-# ロガーの取得
+# Import English text utilities
+from english_text_utils import setup_matplotlib_english, cv2_put_english_text
+
+# Get logger
 logger = logging.getLogger("kuma_depth_opt.visualization")
-# --- ここから追加 ---
-# logger のレベルを DEBUG に設定
+# --- Start of addition ---
+# Set logger level to DEBUG
 logger.setLevel(logging.DEBUG)
-# ハンドラが設定されていなければ、標準出力へのハンドラを追加
+# Add handler to standard output if no handlers are set
 if not logger.hasHandlers():
     handler = logging.StreamHandler()
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 logger.info("Logger for 'kuma_depth_opt.visualization' INITIALIZED. This message should appear if the module is imported and logger is working.")
-# --- ここまで追加 ---
+# --- End of addition ---
 
 def create_depth_visualization(depth_map, original_shape, add_colorbar=True):
-    """深度マップの可視化を行う"""
+    """Visualize depth map"""
     try:
         if depth_map is None or depth_map.size == 0:
             logger.warning("Empty depth map received for visualization")
@@ -30,19 +33,19 @@ def create_depth_visualization(depth_map, original_shape, add_colorbar=True):
                 480 if original_shape is None else original_shape[0]
             )
             
-        # 深度マップの形状をログ出力
+        # Log depth map shape
         logger.debug(f"Visualizing depth map with shape: {depth_map.shape}")
         
-        # 深度マップを2次元に変換
-        if len(depth_map.shape) == 4:  # (1, H, W, 1) 形式
+        # Convert depth map to 2D
+        if len(depth_map.shape) == 4:  # (1, H, W, 1) format
             depth_feature = depth_map.reshape(depth_map.shape[1:3])
-        elif len(depth_map.shape) == 3:  # (H, W, 1) または (1, H, W) 形式
+        elif len(depth_map.shape) == 3:  # (H, W, 1) or (1, H, W) format
             if depth_map.shape[2] == 1:
                 depth_feature = depth_map.reshape(depth_map.shape[:2])
             else:
                 depth_feature = depth_map.reshape(depth_map.shape[1:])
         else:
-            depth_feature = depth_map  # すでに2D
+            depth_feature = depth_map  # already 2D
             
         # NaNやInfをチェックして置換
         depth_feature = np.nan_to_num(depth_feature, nan=0.5, posinf=1.0, neginf=0.1)
@@ -122,46 +125,120 @@ def create_default_depth_image(width=640, height=480, text=None):
         max_text_width = int(width * 0.9)  # 画像幅の90%を最大幅とする
         font_face = cv2.FONT_HERSHEY_SIMPLEX
         
-        # テキストの分割が必要か確認
-        (text_width, text_height), baseline = cv2.getTextSize(text, font_face, font_scale, thickness)
+        # 日本語対応のためのチェック
+        has_japanese = any(ord(c) > 127 for c in text)
         
-        if text_width > max_text_width:
-            # 長いテキストは複数行に分割（単純に半分で区切る）
-            mid_point = len(text) // 2
-            # スペースがあればそこで分割
-            for i in range(mid_point, min(len(text), mid_point + 20)):
-                if text[i] == ' ':
-                    mid_point = i
-                    break
-            
-            text1 = text[:mid_point]
-            text2 = text[mid_point:].strip()
-            
-            (text1_width, text1_height), _ = cv2.getTextSize(text1, font_face, font_scale, thickness)
-            (text2_width, text2_height), _ = cv2.getTextSize(text2, font_face, font_scale, thickness)
-            
-            # 1行目のテキスト位置
-            text1_x = (width - text1_width) // 2
-            text1_y = (height // 2) - int(text1_height * 0.5)
-            
-            # 2行目のテキスト位置
-            text2_x = (width - text2_width) // 2
-            text2_y = (height // 2) + int(text2_height * 1.5)
-            
-            # テキスト描画
-            cv2.putText(default_depth_image, text1, (text1_x, text1_y), 
-                       font_face, font_scale, (255, 255, 255), thickness)
-            cv2.putText(default_depth_image, text2, (text2_x, text2_y), 
-                       font_face, font_scale, (255, 255, 255), thickness)
+        if has_japanese:
+            try:
+                # fix_text_encoding.pyのcv2_putText_ja関数を使用
+                from fix_text_encoding import cv2_putText_ja
+                
+                # テキストが長い場合は複数行に分割
+                if len(text) > width // 10:  # 簡易的な判断
+                    mid_point = len(text) // 2
+                    # スペースがあればそこで分割
+                    for i in range(mid_point, min(len(text), mid_point + 20)):
+                        if text[i] == ' ':
+                            mid_point = i
+                            break
+                    
+                    text1 = text[:mid_point]
+                    text2 = text[mid_point:].strip()
+                    
+                    # テキスト位置を計算
+                    text1_x = width // 2 - len(text1) * int(font_scale * 10) // 2
+                    text1_y = height // 2 - int(font_scale * 15)
+                    
+                    text2_x = width // 2 - len(text2) * int(font_scale * 10) // 2
+                    text2_y = height // 2 + int(font_scale * 25)
+                    
+                    # 各行を描画
+                    default_depth_image = cv2_putText_ja(default_depth_image, text1, (text1_x, text1_y), 
+                                                       font_face, font_scale, (255, 255, 255), thickness)
+                    default_depth_image = cv2_putText_ja(default_depth_image, text2, (text2_x, text2_y), 
+                                                       font_face, font_scale, (255, 255, 255), thickness)
+                else:
+                    # 1行で十分な場合
+                    text_x = width // 2 - len(text) * int(font_scale * 10) // 2
+                    text_y = height // 2 + int(font_scale * 10)
+                    
+                    default_depth_image = cv2_putText_ja(default_depth_image, text, (text_x, text_y), 
+                                                      font_face, font_scale, (255, 255, 255), thickness)
+                
+            except ImportError:
+                logger.warning("fix_text_encoding module not found. Japanese text may not display correctly.")
+                # 通常のcv2.putTextにフォールバック
+                # テキストの分割が必要か確認
+                (text_width, text_height), baseline = cv2.getTextSize(text, font_face, font_scale, thickness)
+                
+                if text_width > max_text_width:
+                    # 長いテキストを分割
+                    mid_point = len(text) // 2
+                    text1 = text[:mid_point]
+                    text2 = text[mid_point:].strip()
+                    
+                    (text1_width, text1_height), _ = cv2.getTextSize(text1, font_face, font_scale, thickness)
+                    
+                    # テキスト位置を計算して描画
+                    text1_x = (width - text1_width) // 2
+                    text1_y = (height // 2) - int(text1_height * 0.5)
+                    cv2.putText(default_depth_image, text1, (text1_x, text1_y), 
+                               font_face, font_scale, (255, 255, 255), thickness)
+                    
+                    # 2行目
+                    (text2_width, text2_height), _ = cv2.getTextSize(text2, font_face, font_scale, thickness)
+                    text2_x = (width - text2_width) // 2
+                    text2_y = (height // 2) + int(text2_height * 1.5)
+                    cv2.putText(default_depth_image, text2, (text2_x, text2_y), 
+                               font_face, font_scale, (255, 255, 255), thickness)
+                else:
+                    # 1行で十分な場合
+                    text_x = (width - text_width) // 2
+                    text_y = (height + text_height) // 2
+                    cv2.putText(default_depth_image, text, (text_x, text_y), 
+                               font_face, font_scale, (255, 255, 255), thickness)
         else:
-            # 1行で十分な場合
-            # テキストの位置を計算（中央配置）
-            text_x = (width - text_width) // 2
-            text_y = (height + text_height) // 2
+            # 非日本語文字の場合は通常のcv2.putTextを使用
+            # テキストの分割が必要か確認
+            (text_width, text_height), baseline = cv2.getTextSize(text, font_face, font_scale, thickness)
             
-            # テキストを描画
-            cv2.putText(default_depth_image, text, (text_x, text_y), 
-                       font_face, font_scale, (255, 255, 255), thickness)
+            if text_width > max_text_width:
+                # 長いテキストは複数行に分割（単純に半分で区切る）
+                mid_point = len(text) // 2
+                # スペースがあればそこで分割
+                for i in range(mid_point, min(len(text), mid_point + 20)):
+                    if text[i] == ' ':
+                        mid_point = i
+                        break
+                
+                text1 = text[:mid_point]
+                text2 = text[mid_point:].strip()
+                
+                (text1_width, text1_height), _ = cv2.getTextSize(text1, font_face, font_scale, thickness)
+                (text2_width, text2_height), _ = cv2.getTextSize(text2, font_face, font_scale, thickness)
+                
+                # 1行目のテキスト位置
+                text1_x = (width - text1_width) // 2
+                text1_y = (height // 2) - int(text1_height * 0.5)
+                
+                # 2行目のテキスト位置
+                text2_x = (width - text2_width) // 2
+                text2_y = (height // 2) + int(text2_height * 1.5)
+                
+                # テキスト描画
+                cv2.putText(default_depth_image, text1, (text1_x, text1_y), 
+                           font_face, font_scale, (255, 255, 255), thickness)
+                cv2.putText(default_depth_image, text2, (text2_x, text2_y), 
+                           font_face, font_scale, (255, 255, 255), thickness)
+            else:
+                # 1行で十分な場合
+                # テキストの位置を計算（中央配置）
+                text_x = (width - text_width) // 2
+                text_y = (height + text_height) // 2
+                
+                # テキストを描画
+                cv2.putText(default_depth_image, text, (text_x, text_y), 
+                           font_face, font_scale, (255, 255, 255), thickness)
     
     return default_depth_image
 
@@ -183,14 +260,14 @@ def depth_to_color(depth_normalized):
     # HSVからBGRへの変換
     return cv2.cvtColor(np.uint8([[[hue, saturation, value]]]), cv2.COLOR_HSV2BGR)[0][0]
 
-def create_depth_grid_visualization(depth_grid_map, absolute_depth=None, cell_size=60): # 引数変更
+def create_depth_grid_visualization(depth_grid_map, absolute_depth=None, cell_size=40): # 引数と既定値変更
     """
     圧縮済みの深度グリッドマップの可視化を行う
     
     Args:
         depth_grid_map: 圧縮済みの深度グリッドマップ (rows, cols)
         absolute_depth: 絶対深度マップ（オプション、現在はグリッドセルごとの絶対深度表示に使用）
-        cell_size: セルサイズ（ピクセル）
+        cell_size: セルサイズ（ピクセル）- 小さくして表示を最適化
 
     Returns:
         グリッド可視化画像
@@ -246,8 +323,14 @@ def create_depth_grid_visualization(depth_grid_map, absolute_depth=None, cell_si
                         # この変換は仮のものです。実際の絶対深度の計算方法に合わせてください。
                         depth_val = 15.0 / depth_conv[i, j] 
                         text = f"{depth_val:.1f}m"
-                        cv2.putText(output, text, (x_start + 5, y_start + 30), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                        # 背景付きのテキストで視認性向上
+                        (text_width, text_height), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+                        text_bg_x1, text_bg_y1 = x_start + 3, y_start + 15 - text_height - 3
+                        text_bg_x2, text_bg_y2 = x_start + 3 + text_width + 6, y_start + 15 + 3
+                        
+                        cv2.rectangle(output, (text_bg_x1, text_bg_y1), (text_bg_x2, text_bg_y2), (0, 0, 0), -1)
+                        cv2.putText(output, text, (x_start + 5, y_start + 15), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
         # グリッド線を描画
         for i in range(rows + 1):
