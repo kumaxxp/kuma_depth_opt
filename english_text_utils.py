@@ -1,3 +1,4 @@
+import matplotlib.font_manager as fm
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
@@ -15,18 +16,36 @@ import sys
 
 def setup_matplotlib_english():
     """
-    Configure matplotlib to use English fonts for all text
+    Configure matplotlib to use English or Japanese fonts for all text (auto-detect)
     """
-    print("Configuring matplotlib for English text display...")
-    
-    # Simple configuration that works in all environments
-    matplotlib.rcParams.update({
-        'font.sans-serif': ['DejaVu Sans', 'Arial', 'Helvetica', 'sans-serif'],
-        'font.family': 'sans-serif',
-        'axes.unicode_minus': False  # Ensure minus signs display correctly
-    })
-    
-    print("Font configuration completed")
+    print("Configuring matplotlib for text display (auto-detect Japanese font)...")
+    ja_font_candidates = [
+        'Noto Sans CJK JP', 'Noto Sans JP', 'IPAPGothic', 'VL Gothic',
+        'TakaoGothic', 'Yu Gothic', 'Meiryo', 'MS Gothic', 'Sazanami Gothic',
+        'Kochi Gothic', 'DejaVu Sans'
+    ]
+    available_fonts = set(f.name for f in fm.fontManager.ttflist)
+    selected_font = None
+    for font in ja_font_candidates:
+        if font in available_fonts:
+            selected_font = font
+            break
+    if selected_font:
+        print(f"Found Japanese font: {selected_font}. Setting as default font for matplotlib.")
+        matplotlib.rcParams.update({
+            'font.family': 'sans-serif',
+            'font.sans-serif': [selected_font, 'DejaVu Sans', 'Arial', 'Helvetica', 'sans-serif'],
+            'axes.unicode_minus': False
+        })
+    else:
+        print("No Japanese font found. Using English-only font settings.")
+        print("If you want Japanese text in figures, install e.g. 'Noto Sans CJK JP' or 'VL Gothic'.")
+        matplotlib.rcParams.update({
+            'font.sans-serif': ['DejaVu Sans', 'Arial', 'Helvetica', 'sans-serif'],
+            'font.family': 'sans-serif',
+            'axes.unicode_minus': False
+        })
+    print("Font configuration completed.")
 
 def cv2_put_english_text(img, text, org, fontFace, fontScale, color, thickness=1, lineType=cv2.LINE_AA):
     """

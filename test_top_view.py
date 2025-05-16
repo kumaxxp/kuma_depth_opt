@@ -21,7 +21,7 @@ from depth_processor import convert_to_absolute_depth, depth_to_point_cloud
 from depth_processor import create_top_down_occupancy_grid, visualize_occupancy_grid
 from depth_processor.visualization import create_depth_grid_visualization, create_default_depth_image
 
-# Configure matplotlib for English text
+# Configure matplotlib for English/Japanese text (auto-detect)
 setup_matplotlib_english()
 
 def load_depth_grid_from_csv(csv_path):
