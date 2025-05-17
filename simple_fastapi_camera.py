@@ -661,12 +661,18 @@ def get_top_down_view_stream():
                         print(f"[TopDownStream] Height percentiles for classification: {height_percentiles_topdown}")
                     
                     print(f"[TopDownStream] Creating occupancy grid: resolution={grid_resolution}m, size={grid_width}x{grid_height}, height_threshold={height_threshold}m")
+                    
+                    # 関数シグネチャを出力して確認
+                    import inspect
+                    print(f"[TopDownStream] DEBUG - Function signature: {inspect.signature(create_top_down_occupancy_grid)}")
+                    
+                    # 位置引数として渡す（仮定：順序が point_cloud, resolution, grid_width, grid_height, height_threshold）
                     occupancy_grid = create_top_down_occupancy_grid(
                         point_cloud, 
-                        cell_size=grid_resolution,  # resolution から cell_size に変更
-                        grid_width=grid_width,
-                        grid_height=grid_height,
-                        height_threshold=height_threshold
+                        grid_resolution,  # キーワード引数ではなく位置引数として渡す
+                        grid_width,
+                        grid_height,
+                        height_threshold
                     )
                     
                     # 占有グリッドの視覚化
