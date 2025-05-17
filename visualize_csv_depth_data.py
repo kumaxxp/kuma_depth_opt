@@ -101,19 +101,28 @@ def visualize_point_cloud_3d(points, camera_params_config, depth_grid_shape):
         
     # ==== トップダウン投影点の表示を3Dグラフに追加 === =
     if points is not None and points.size > 0:
-        # トップダウンビューのパラメータ
-        min_height = 0.0   # 検出する最小高さ（床面から）
-        max_height = 1.0   # 検出する最大高さ
+        # 点群のY座標（高さ）の範囲を自動的に計算
+        y_min, y_max = np.min(points[:, 1]), np.max(points[:, 1])
+        print(f"点群の高さ範囲: {y_min:.2f}m 〜 {y_max:.2f}m")
+        
+        # トップダウンビューのパラメータ - 高さ範囲を調整
+        # 自動的にY座標の範囲から適切な範囲を計算
+        min_height = max(y_min, -4.0)   # 下限（床面から）を設定、極端な外れ値を除外
+        max_height = min(y_max, 1.5)    # 上限を設定、天井などの外れ値を除外
+        
+        print(f"トップダウン投影で使用する高さ範囲: {min_height:.2f}m 〜 {max_height:.2f}m")
         
         # トップダウンビューへの点の投影（XZ平面）
         valid_points = points[(points[:, 1] >= min_height) & (points[:, 1] <= max_height)]
+        print(f"有効な点の数: {len(valid_points)}/{len(points)} ({len(valid_points)/len(points)*100:.1f}%)")
+        
         if valid_points.size > 0:
             # 投影点を3Dグラフにプロット（グリッド平面上）
             ax_3d.scatter(
                 valid_points[:, 0],                    # X座標はそのまま 
                 np.full(valid_points.shape[0], grid_y_level),  # Y座標はグリッド平面のY値に
                 valid_points[:, 2],                    # Z座標はそのまま
-                s=20,                                 # ポイントサイズをさらに大きく
+                s=20,                                  # ポイントサイズ
                 c='red', 
                 marker='x',                            # マーカーをXに
                 alpha=0.8,                             # 透明度
@@ -134,7 +143,13 @@ def visualize_point_cloud_3d(points, camera_params_config, depth_grid_shape):
                 )
             
             # 占有グリッドの計算と表示
-            resolution = 0.1  # グリッドのセルサイズ（メートル）
+            # サンプル数やパフォーマンスに応じて解像度を調整
+            if len(valid_points) > 500:
+                resolution = 0.2  # 大量のポイントがある場合は粗い解像度
+            elif len(valid_points) > 200:
+                resolution = 0.15 # 中程度のポイント数
+            else:
+                resolution = 0.1  # 少数のポイントの場合は詳細な解像度
 
             # 実際の点群の範囲を使用してグリッドパラメータを設定
             if valid_points.size > 0:
@@ -151,7 +166,9 @@ def visualize_point_cloud_3d(points, camera_params_config, depth_grid_shape):
                     "z_range": (z_min - z_padding, z_max + z_padding),
                     "resolution": resolution,
                     "y_min": min_height,
-                    "y_max": max_height
+                    "y_max": max_height,
+                    "use_adaptive_thresholds": False,  # 安定した結果のため適応閾値を無効化
+                    "obstacle_threshold": 0.1  # 障害物として検出する高さの閾値
                 }
                 
                 # グリッドの範囲をトップダウンプレーンにも反映
@@ -178,49 +195,74 @@ def visualize_point_cloud_3d(points, camera_params_config, depth_grid_shape):
                 updated_grid_collection = Poly3DCollection(updated_grid_verts, alpha=0.2, color='lightgreen', label='Updated Grid')
                 ax_3d.add_collection3d(updated_grid_collection)
                 
-                # ここに占有グリッドの処理を追加
+                # 占有グリッドの処理
                 try:
+                    print("占有グリッドの生成を開始...")
+                    print(f"グリッドパラメータ: {grid_params}")
+                    
                     # 占有グリッドの作成
                     occupancy_grid = create_top_down_occupancy_grid(valid_points, grid_params)
                     
                     # グリッドの各セルの中心座標を計算
                     grid_height, grid_width = occupancy_grid.shape
-                    x_coords = np.linspace(grid_params["x_range"][0], grid_params["x_range"][1], grid_width)
-                    z_coords = np.linspace(grid_params["z_range"][0], grid_params["z_range"][1], grid_height)
+                    x_coords = np.linspace(grid_params["x_range"][0] + resolution/2, grid_params["x_range"][1] - resolution/2, grid_width)
+                    z_coords = np.linspace(grid_params["z_range"][0] + resolution/2, grid_params["z_range"][1] - resolution/2, grid_height)
                     
                     print(f"占有グリッドの形状: {occupancy_grid.shape}, 占有セル数: {np.sum(occupancy_grid > 0)}")
+                    print(f"占有グリッドの値: 最小={np.min(occupancy_grid)}, 最大={np.max(occupancy_grid)}")
                     
-                    # 占有セルをグリッド平面上に表示
+                    # デバッグ: 占有グリッドの中身を表示
+                    if np.sum(occupancy_grid > 0) == 0:
+                        print("警告: 占有グリッドに値が入っていません")
+                    else:
+                        # 一定数の占有セルの値を表示
+                        occupied_cells = np.where(occupancy_grid > 0)
+                        if len(occupied_cells[0]) > 0:
+                            print("占有セルのサンプル:")
+                            for i in range(min(5, len(occupied_cells[0]))):
+                                row, col = occupied_cells[0][i], occupied_cells[1][i]
+                                print(f"  セル[{row},{col}] = {occupancy_grid[row, col]}, 座標 = ({z_coords[row]:.2f}, {x_coords[col]:.2f})")
+                    
+                    # 占有セルの表示
+                    occupied_count = 0
                     for i in range(grid_height):
                         for j in range(grid_width):
-                            if occupancy_grid[i, j] > 0:  # 占有されているセル
+                            cell_value = occupancy_grid[i, j]
+                            if cell_value > 0:  # 占有されているセル
+                                occupied_count += 1
                                 x_center = x_coords[j]
                                 z_center = z_coords[i]
                                 
-                                # セルの4隅の座標 - 最後の点の座標を修正
+                                # セルを色付きの立方体として表示（高さもある）
+                                cell_size_y = 0.1  # セルの高さ
                                 cell_corners = np.array([
                                     [x_center - resolution/2, grid_y_level, z_center - resolution/2],
                                     [x_center + resolution/2, grid_y_level, z_center - resolution/2],
                                     [x_center + resolution/2, grid_y_level, z_center + resolution/2],
-                                    [x_center - resolution/2, grid_y_level, z_center + resolution/2]  # この行を修正
+                                    [x_center - resolution/2, grid_y_level, z_center + resolution/2],
+                                    [x_center - resolution/2, grid_y_level + cell_size_y, z_center - resolution/2],
+                                    [x_center + resolution/2, grid_y_level + cell_size_y, z_center - resolution/2],
+                                    [x_center + resolution/2, grid_y_level + cell_size_y, z_center + resolution/2],
+                                    [x_center - resolution/2, grid_y_level + cell_size_y, z_center + resolution/2]
                                 ])
                                 
-                                # セルを半透明の四角形として描画
-                                cell_verts = [cell_corners]
-                                # 占有度に応じた色を使用
-                                color_value = min(1.0, occupancy_grid[i, j] / np.max(occupancy_grid))
-                                cell_color = plt.cm.hot(color_value)  # より目立つカラーマップを使用
-                                cell_collection = Poly3DCollection(cell_verts, alpha=0.7, facecolor=cell_color)
+                                # ここは立方体を各面ごとに描画
+                                faces = [
+                                    [cell_corners[0], cell_corners[1], cell_corners[2], cell_corners[3]],  # 底面
+                                    [cell_corners[4], cell_corners[5], cell_corners[6], cell_corners[7]],  # 上面
+                                    [cell_corners[0], cell_corners[1], cell_corners[5], cell_corners[4]],  # 前面
+                                    [cell_corners[1], cell_corners[2], cell_corners[6], cell_corners[5]],  # 右面
+                                    [cell_corners[2], cell_corners[3], cell_corners[7], cell_corners[6]],  # 後面
+                                    [cell_corners[3], cell_corners[0], cell_corners[4], cell_corners[7]]   # 左面
+                                ]
+                                
+                                # 占有度に応じた色を使用 (暖色系で、より目立つように)
+                                color_value = min(1.0, cell_value / np.max(occupancy_grid) if np.max(occupancy_grid) > 0 else 0)
+                                cell_color = plt.cm.hot(color_value)  # 暖色系カラーマップ
+                                cell_collection = Poly3DCollection(faces, alpha=0.7, facecolor=cell_color, edgecolor='black')
                                 ax_3d.add_collection3d(cell_collection)
                     
-                    # 投影点の座標範囲を出力
-                    print("投影点の座標範囲:")
-                    print(f"  X: {np.min(valid_points[:, 0]):.4f} ～ {np.max(valid_points[:, 0]):.4f}")
-                    print(f"  Z: {np.min(valid_points[:, 2]):.4f} ～ {np.max(valid_points[:, 2]):.4f}")
-                    print(f"占有グリッドのパラメータ:")
-                    print(f"  X範囲: {grid_params['x_range']}")
-                    print(f"  Z範囲: {grid_params['z_range']}")
-                    print(f"  解像度: {grid_params['resolution']}")
+                    print(f"グラフに表示した占有セル数: {occupied_count}")
                     
                 except Exception as e:
                     print(f"占有グリッド作成エラー: {e}")
