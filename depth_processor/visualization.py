@@ -314,31 +314,21 @@ def create_depth_grid_visualization(depth_grid_map, absolute_depth=None, cell_si
                 cell_color = depth_colored[i, j]
                 output[y_start:y_end, x_start:x_end] = cell_color
                 
-                # セルに深度値を表示（絶対深度がある場合）
-                # 注意: absolute_depth が渡された場合、それがグリッドセルに対応したデータであることを期待します。
-                # もし元の高解像度 absolute_depth の場合、別途圧縮処理が必要です。
-                # ここでは、depth_conv（圧縮済みの相対深度）から簡易的に絶対深度を計算して表示する例のままにします。
-                if absolute_depth is not None: 
-                    if depth_conv[i, j] > 1e-5: # ゼロ除算を避ける
-                        # この変換は仮のものです。実際の絶対深度の計算方法に合わせてください。
-                        depth_val = 15.0 / depth_conv[i, j] 
-                        text = f"{depth_val:.1f}m"
-                        # 背景付きのテキストで視認性向上
-                        (text_width, text_height), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
-                        text_bg_x1, text_bg_y1 = x_start + 3, y_start + 15 - text_height - 3
-                        text_bg_x2, text_bg_y2 = x_start + 3 + text_width + 6, y_start + 15 + 3
-                        
-                        cv2.rectangle(output, (text_bg_x1, text_bg_y1), (text_bg_x2, text_bg_y2), (0, 0, 0), -1)
-                        cv2.putText(output, text, (x_start + 5, y_start + 15), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+                # テキスト表示部分を削除（深度値の表示をなくす）
+                # ↓↓↓ この部分を削除 ↓↓↓
+                # if absolute_depth is not None: 
+                #    ...テキスト表示の処理...
 
-        # グリッド線を描画
+        # グリッド線を描画（薄くして目立たなくする）
+        grid_color = (30, 30, 30)  # より暗いグレー
+        grid_thickness = 1         # 細い線幅
+        
         for i in range(rows + 1):
             y = i * cell_size
-            cv2.line(output, (0, y), (cols * cell_size, y), (50, 50, 50), 1)
+            cv2.line(output, (0, y), (cols * cell_size, y), grid_color, grid_thickness)
         for j in range(cols + 1):
             x = j * cell_size
-            cv2.line(output, (x, 0), (x, rows * cell_size), (50, 50, 50), 1)
+            cv2.line(output, (x, 0), (x, rows * cell_size), grid_color, grid_thickness)
 
         return output
         
