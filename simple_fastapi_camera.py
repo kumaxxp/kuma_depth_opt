@@ -666,13 +666,21 @@ def get_top_down_view_stream():
                     import inspect
                     print(f"[TopDownStream] DEBUG - Function signature: {inspect.signature(create_top_down_occupancy_grid)}")
                     
-                    # パラメータを辞書にまとめる
+                    # 適切なパラメータを持つ辞書を作成
+                    # x_rangeとz_rangeを点群から計算し、追加
+                    x_range = [np.min(point_cloud[:, 0])-0.5, np.max(point_cloud[:, 0])+0.5]
+                    z_range = [np.min(point_cloud[:, 2])-0.5, np.max(point_cloud[:, 2])+0.5]
+                    
                     grid_params = {
                         'resolution': grid_resolution,
                         'grid_width': grid_width,
                         'grid_height': grid_height,
-                        'height_threshold': height_threshold
+                        'height_threshold': height_threshold,
+                        'x_range': x_range,  # 追加: X方向の範囲
+                        'z_range': z_range   # 追加: Z方向の範囲
                     }
+                    
+                    print(f"[TopDownStream] Grid params: {grid_params}")
                     
                     # 2つの引数だけを渡す形式に修正
                     occupancy_grid = create_top_down_occupancy_grid(
