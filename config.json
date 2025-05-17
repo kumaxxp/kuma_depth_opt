@@ -15,6 +15,8 @@
     "visualization_max": 0.9,
     "fx": 500,
     "fy": 500,
+    "cx": 192,
+    "cy": 128,
     "scaling_factor": 15.0
   },
   "server": {
