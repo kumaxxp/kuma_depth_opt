@@ -148,12 +148,25 @@ def process_depth_grid(depth_grid, save_dir=None):
     
     # 4. Generate occupancy grid
     print("4. Creating occupancy grid...")
+    
+    # XとZの範囲を点群から計算
+    x_range = [x_min - 0.5, x_max + 0.5]
+    z_range = [z_min - 0.5, z_max + 0.5]
+    
+    # パラメータを辞書にまとめる
+    grid_params = {
+        'resolution': grid_resolution,
+        'grid_width': grid_width,
+        'grid_height': grid_height,
+        'height_threshold': height_threshold,
+        'x_range': x_range,
+        'z_range': z_range
+    }
+    
+    # 修正後の関数呼び出し方法
     occupancy_grid = create_top_down_occupancy_grid(
         point_cloud,
-        grid_resolution=grid_resolution,
-        grid_width=grid_width,
-        grid_height=grid_height,
-        height_threshold=height_threshold
+        grid_params
     )
     
     if occupancy_grid is None:
