@@ -662,9 +662,10 @@ def get_top_down_view_stream():
                     
                     print(f"[TopDownStream] Creating occupancy grid: resolution={grid_resolution}m, size={grid_width}x{grid_height}, height_threshold={height_threshold}m")
                     
-                    # 関数シグネチャを出力して確認
+                    # 関数シグネチャの表示はデバッグモードでのみ実行
                     import inspect
-                    print(f"[TopDownStream] DEBUG - Function signature: {inspect.signature(create_top_down_occupancy_grid)}")
+                    if False:  # デバッグモードの場合はTrueにする
+                        print(f"[TopDownStream] DEBUG - Function signature: {inspect.signature(create_top_down_occupancy_grid)}")
                     
                     # 適切なパラメータを持つ辞書を作成
                     # x_rangeとz_rangeを点群から計算し、追加
@@ -676,11 +677,13 @@ def get_top_down_view_stream():
                         'grid_width': grid_width,
                         'grid_height': grid_height,
                         'height_threshold': height_threshold,
-                        'x_range': x_range,  # 追加: X方向の範囲
-                        'z_range': z_range   # 追加: Z方向の範囲
+                        'x_range': x_range,  # X方向の範囲
+                        'z_range': z_range   # Z方向の範囲
                     }
                     
-                    print(f"[TopDownStream] Grid params: {grid_params}")
+                    # パラメータログはデバッグ時のみ表示
+                    if False:  # デバッグモードの場合はTrueにする
+                        print(f"[TopDownStream] Grid params: {grid_params}")
                     
                     # 2つの引数だけを渡す形式に修正
                     occupancy_grid = create_top_down_occupancy_grid(
@@ -725,13 +728,15 @@ def get_top_down_view_stream():
             # テキストオーバーレイ
             if len(fps_stats["top_down"]) > 0:
                 avg_fps = sum(fps_stats["top_down"]) / len(fps_stats["top_down"])
+                # FPSのみを表示
                 cv2.putText(vis_img, f"FPS: {avg_fps:.1f}", (10, 20), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                 
-                with depth_map_lock:
-                    delay = (time.time() - frame_timestamp) * 1000 if frame_timestamp > 0 else 0
-                cv2.putText(vis_img, f"Delay: {delay:.1f}ms", (10, 40), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                # 遅延表示は必要なければコメントアウト
+                # with depth_map_lock:
+                #     delay = (time.time() - frame_timestamp) * 1000 if frame_timestamp > 0 else 0
+                # cv2.putText(vis_img, f"Delay: {delay:.1f}ms", (10, 40), 
+                #             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
             
             # JPEG エンコード
             ret, buffer = cv2.imencode('.jpg', vis_img, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
