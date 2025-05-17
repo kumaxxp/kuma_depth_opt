@@ -663,7 +663,7 @@ def get_top_down_view_stream():
                     print(f"[TopDownStream] Creating occupancy grid: resolution={grid_resolution}m, size={grid_width}x{grid_height}, height_threshold={height_threshold}m")
                     occupancy_grid = create_top_down_occupancy_grid(
                         point_cloud, 
-                        resolution=grid_resolution,  # grid_resolution から resolution に変更
+                        cell_size=grid_resolution,  # resolution から cell_size に変更
                         grid_width=grid_width,
                         grid_height=grid_height,
                         height_threshold=height_threshold
