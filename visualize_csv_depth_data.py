@@ -2,10 +2,17 @@
 import argparse
 import json
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
+import japanize_matplotlib # 追加
 from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection # Poly3DCollectionをインポート
 import os
 import sys
+
+# 日本語フォントの設定 (WSLにインストールしたフォント名に合わせてください)
+#matplotlib.rcParams['font.family'] = 'Noto Sans CJK JP'
+# または 'IPAPGothic', 'IPAexGothic' など、インストールしたフォントを指定
 
 # プロジェクトルートをPythonパスに追加するための処理
 # このスクリプトがプロジェクトルート直下にあることを想定
@@ -43,44 +50,87 @@ def load_depth_data_from_csv(csv_path):
         print(f"Error loading CSV data: {e}")
         sys.exit(1)
 
-def visualize_point_cloud_3d(points, camera_params_config):
-    """3Dポイントクラウドとカメラ座標系をMatplotlibで可視化する"""
+def visualize_point_cloud_3d(points, camera_params_config, depth_grid_shape): # depth_grid_shape を追加
+    """3Dポイントクラウドとカメラ座標系、各種平面をMatplotlibで可視化する"""
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection='3d')
 
-    # Matplotlibの日本語フォント設定 (coordinate_systems.pyと同様)
-    # matplotlib.rcParams['font.family'] = 'Noto Sans CJK JP' # Or your preferred font
-
     # カメラ座標系の軸を描画
-    axis_length = 0.5  # ポイントクラウドに焦点を合わせるため少し小さく
+    axis_length = 0.5
     ax.quiver(0, 0, 0, axis_length, 0, 0, color='r', arrow_length_ratio=0.1, label='Camera X (右)')
-    ax.quiver(0, 0, 0, 0, axis_length, 0, color='g', arrow_length_ratio=0.1, label='Camera Y (下)') # Y軸は下向き
+    ax.quiver(0, 0, 0, 0, axis_length, 0, color='g', arrow_length_ratio=0.1, label='Camera Y (下)')
     ax.quiver(0, 0, 0, 0, 0, axis_length, color='b', arrow_length_ratio=0.1, label='Camera Z (前)')
 
+    # カメラスクリーンを表現 (coordinate_systems.py を参考に値を調整)
+    screen_distance = camera_params_config.get("screen_distance", 0.3) # Z軸方向の距離
+    # screen_width と screen_height はポイントクラウドの視野角からある程度推測するか、固定値
+    # ここではCSVの解像度と焦点距離から簡易的に画角を考慮してみる (オプション)
+    # fx = camera_params_config.get("fx_scaled") # スケーリングされたfx
+    # grid_cols = depth_grid_shape[1]
+    # if fx and grid_cols > 0:
+    #     # 簡易的に、スクリーン距離での横幅を計算 (2 * dist * tan(fov_x/2))
+    #     # tan(fov_x/2) = (grid_cols/2) / fx
+    #     screen_width_derived = screen_distance * grid_cols / fx if fx != 0 else 0.8
+    # else:
+    #     screen_width_derived = 0.8
+    # screen_height_derived = screen_width_derived * (depth_grid_shape[0] / depth_grid_shape[1]) if depth_grid_shape[1] > 0 else 0.6
+    
+    # 固定値を使用 (coordinate_systems.py よりスケールを小さく)
+    screen_width = 0.6 # camera_params_config.get("screen_width", screen_width_derived)
+    screen_height = 0.4 # camera_params_config.get("screen_height", screen_height_derived)
+
+    screen_corners = np.array([
+        [-screen_width/2, -screen_height/2, screen_distance],
+        [screen_width/2, -screen_height/2, screen_distance],
+        [screen_width/2, screen_height/2, screen_distance],
+        [-screen_width/2, screen_height/2, screen_distance],
+    ])
+    screen_verts = [screen_corners]
+    screen_collection = Poly3DCollection(screen_verts, alpha=0.2, color='cyan', label='Camera Screen')
+    ax.add_collection3d(screen_collection)
+    ax.text(0, 0, screen_distance, " Screen", color='black', fontsize=8)
+
+
+    # トップダウングリッドを表現 (coordinate_systems.py を参考に値を調整)
+    grid_y_level = camera_params_config.get("top_down_grid_y_level", 0.5)  # Y軸の値（床の高さなど）
+    grid_size_x = camera_params_config.get("top_down_grid_size_x", 2.0) # X方向のサイズ
+    grid_size_z = camera_params_config.get("top_down_grid_size_z", 3.0) # Z方向のサイズ
+    grid_z_offset = camera_params_config.get("top_down_grid_z_offset", 0.5) # Z方向のオフセット
+
+    grid_corners = np.array([
+        [-grid_size_x/2, grid_y_level, grid_z_offset],
+        [grid_size_x/2, grid_y_level, grid_z_offset],
+        [grid_size_x/2, grid_y_level, grid_z_offset + grid_size_z],
+        [-grid_size_x/2, grid_y_level, grid_z_offset + grid_size_z],
+    ])
+    grid_verts = [grid_corners]
+    grid_collection = Poly3DCollection(grid_verts, alpha=0.2, color='lightgreen', label='Top-down Grid')
+    ax.add_collection3d(grid_collection)
+    ax.text(0, grid_y_level, grid_z_offset + grid_size_z/2, " Grid", color='black', fontsize=8)
+
     if points is not None and points.size > 0:
-        # Y軸の値を反転して表示（カメラ座標系Y軸下向きを、一般的な3Dプロットの上向きに合わせる場合）
-        # ただし、ここではカメラ座標系に従い、Y下向きのままプロットする。
-        # 必要であれば points[:, 1] * -1 で反転
-        ax.scatter(points[:, 0], points[:, 1], points[:, 2], s=1, c=points[:, 2], cmap='viridis', alpha=0.5)
-        print(f"Visualizing {points.shape[0]} points.")
+        # ポイントクラウドのY軸はカメラ座標系に従い下向きが正
+        ax.scatter(points[:, 0], points[:, 1], points[:, 2], s=1, c=points[:, 2], cmap='viridis', alpha=0.7)
     else:
         print("No points to visualize or points array is invalid.")
 
-    ax.set_xlabel('X (メートル)')
-    ax.set_ylabel('Y (メートル)')
-    ax.set_zlabel('Z (メートル)')
-    ax.set_title('CSVからの3Dポイントクラウド')
+    # 軸ラベルとタイトル
+    ax.set_xlabel("X (右)")
+    ax.set_ylabel("Y (下)")
+    ax.set_zlabel("Z (前)")
+    ax.set_title("CSV深度データからの3Dポイントクラウドと座標系")
 
-    # 視点や範囲、アスペクト比はcoordinate_systems.pyを参考に調整可能
-    # ax.set_xlim([-3, 3])
-    # ax.set_ylim([-3, 3]) # Y軸の範囲も考慮
-    # ax.set_zlim([0, 6])
-    # ax.view_init(elev=20, azim=-75) # 例: 少し上からの視点
-    ax.view_init(elev=-150, azim=-90) # Y軸下向きを考慮した視点調整の例 (前から見る)
-    # ax.view_init(elev=0, azim=-90) # 真横からの視点
+    # 視点調整 (Y軸下向きを考慮)
+    ax.view_init(elev=-24, azim=-170, roll=85) # 前から見る
+    # ax.view_init(elev=20, azim=-75) # 少し上から斜め
+    # ax.view_init(elev=0, azim=-90) # 真横から (X-Z平面)
+    # ax.view_init(elev=-90, azim=-90) # 真下から (X-Z平面、トップダウンに近いがY軸反転)
 
-    # Z軸を上向きとして表示したい場合は、座標変換とview_initの調整が必要
-    # ax.set_box_aspect([1,1,1]) # アスペクト比を均等に
+    # 軸の範囲設定 (ポイントクラウドや平面に合わせて調整)
+    # ax.set_xlim([-1.5, 1.5])
+    # ax.set_ylim([-0.5, 1.5]) # Y軸下向きなので、-0.5 (上) から 1.5 (下)
+    # ax.set_zlim([0, 3.5])
+    # ax.set_box_aspect([3, 2, 3.5]) # X, Y, Z の軸スケール比
 
     plt.legend()
     plt.tight_layout()
@@ -113,53 +163,63 @@ if __name__ == "__main__":
         print("エラー: 設定ファイルに必要なカメラパラメータ (fx, fy, cx, cy, scaling_factor, width, height) が見つかりません。")
         sys.exit(1)
 
-    # CSVから深度グリッドを読み込む (相対深度を想定)
-    relative_depth_grid = load_depth_data_from_csv(args.csv_file)
-
-    if relative_depth_grid is None:
+    depth_data_raw = load_depth_data_from_csv(args.csv_file)
+    
+    # scaling_factor がリストや数値でない場合の対応を追加
+    if isinstance(scaling_factor, list):
+        # リストの場合、適切な値を選択するか、エラー処理
+        # ここでは仮に最初の値を使用するか、あるいは特定のロジックが必要
+        if len(scaling_factor) > 0:
+            s_factor = scaling_factor[0] 
+            print(f"Warning: scaling_factor is a list, using the first element: {s_factor}")
+        else:
+            print("Error: scaling_factor is an empty list.")
+            sys.exit(1)
+    elif isinstance(scaling_factor, (int, float)):
+        s_factor = scaling_factor
+    else:
+        print(f"Error: scaling_factor is of an unsupported type: {type(scaling_factor)}")
         sys.exit(1)
 
-    # 相対深度グリッドを絶対深度(メートル単位)に変換
-    # is_compressed_grid=True はCSVが圧縮グリッドであることを示す
-    absolute_depth_grid = convert_to_absolute_depth(
-        relative_depth_grid,
-        scaling_factor=scaling_factor,
-        is_compressed_grid=True 
-    )
-    print(f"絶対深度グリッドに変換完了, shape: {absolute_depth_grid.shape}")
+    depth_absolute = convert_to_absolute_depth(depth_data_raw, s_factor)
 
-    grid_rows, grid_cols = absolute_depth_grid.shape
-
-    # ポイントクラウド生成のためのカメラパラメータ調整
-    # fx, fy はピクセル単位の焦点距離。cx, cy はピクセル単位の光軸中心。
-    # これらが original_width, original_height の解像度に対するものであると仮定。
-    # depth_to_point_cloud は is_grid_data=True の場合、
-    # fx, fy を「グリッドセル単位の焦点距離」として、
-    # cx, cy を「グリッドセル単位の光軸中心」として期待する。
-
-    fx_for_grid = fx * (grid_cols / original_width)
-    fy_for_grid = fy * (grid_rows / original_height)
+    # depth_to_point_cloud に渡すカメラパラメータを辞書にまとめる
+    # スケーリングされた内部パラメータを計算
+    # fx, fy, cx, cy は original_width, original_height における値
+    # depth_data_raw.shape[1] (cols), depth_data_raw.shape[0] (rows) はCSVの解像度
     
-    # cx, cy もグリッドの解像度に合わせてスケーリング
-    cx_for_grid = cx * (grid_cols / original_width)
-    cy_for_grid = cy * (grid_rows / original_height)
+    # CSVの解像度とconfigの解像度が異なる場合、焦点距離と光軸中心をスケーリングする必要がある
+    grid_rows, grid_cols = depth_data_raw.shape
     
-    print(f"ポイントクラウド生成用パラメータ: fx_grid={fx_for_grid:.2f}, fy_grid={fy_for_grid:.2f}, cx_grid={cx_for_grid:.2f}, cy_grid={cy_for_grid:.2f}")
+    fx_scaled = fx * (grid_cols / original_width) if original_width > 0 else fx
+    fy_scaled = fy * (grid_rows / original_height) if original_height > 0 else fy
+    cx_scaled = cx * (grid_cols / original_width) if original_width > 0 else cx
+    cy_scaled = cy * (grid_rows / original_height) if original_height > 0 else cy
+
+    # camera_params_for_pc は直接使わなくなるか、他の目的で使用
+    # camera_params_for_pc = {
+    #     "fx": fx_scaled,
+    #     "fy": fy_scaled,
+    #     "cx": cx_scaled,
+    #     "cy": cy_scaled,
+    #     "is_grid_data": True 
+    # }
+    
+    # visualize_point_cloud_3d に渡す設定用辞書にも追加しておく
+    camera_params_config_vis = {
+        "fx_scaled": fx_scaled, "fy_scaled": fy_scaled, "cx_scaled": cx_scaled, "cy_scaled": cy_scaled,
+        "screen_distance": 0.3, # 例: スクリーンのZ位置
+        "top_down_grid_y_level": 0.5, # 例: グリッドのYレベル (床面など)
+        # 他の平面表示用パラメータもここに追加可能
+    }
 
     points = depth_to_point_cloud(
-        absolute_depth_grid,
-        fx=fx_for_grid,
-        fy=fy_for_grid,
-        cx=cx_for_grid, 
-        cy=cy_for_grid,
-        is_grid_data=True,
-        grid_rows=grid_rows,
-        grid_cols=grid_cols
-        # original_width, original_height は直接使われないが、
-        # fx_for_grid等の計算の前提となっている解像度情報として重要
+        depth_absolute,
+        fx=fx_scaled,
+        fy=fy_scaled,
+        cx=cx_scaled,
+        cy=cy_scaled,
+        is_grid_data=True # CSVデータはグリッドデータとして扱う
     )
-
-    if points is not None and points.ndim == 2 and points.shape[1] == 3:
-        visualize_point_cloud_3d(points, depth_config)
-    else:
-        print("ポイントクラウドの生成に失敗したか、ポイントがありません。")
+    
+    visualize_point_cloud_3d(points, camera_params_config_vis, depth_data_raw.shape) # depth_grid_shape を渡す
