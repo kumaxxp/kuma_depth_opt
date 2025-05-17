@@ -162,19 +162,24 @@ def depth_to_point_cloud(depth_data, fx, fy, cx, cy,
         logger.debug(traceback.format_exc())
         return np.empty((0, 3), dtype=np.float32)
 
-def create_top_down_occupancy_grid(points, grid_resolution=GRID_RESOLUTION, 
-                                  grid_width=GRID_WIDTH, grid_height=GRID_HEIGHT, 
-                                  height_threshold=HEIGHT_THRESHOLD):
+def create_top_down_occupancy_grid(points, grid_params):
     """
     Generate a top-down occupancy grid from a 3D point cloud.
     This is an optimized version that also supports compressed data.
 
     Args:
         points (numpy.ndarray): 3D point cloud data with shape (N, 3)
-        grid_resolution (float): Grid resolution (meters/cell)
-        grid_width (int): Grid width (number of cells)
-        grid_height (int): Grid height (number of cells)
-        height_threshold (float): Height threshold for passability judgment (meters)
+        grid_params : dict
+            x_range : tuple (min_x, max_x)
+                X-axis range
+            z_range : tuple (min_z, max_z)
+                Z-axis range
+            resolution : float
+                Grid cell size (meters)
+            y_min : float
+                Minimum height (Y coordinate) to be considered
+            y_max : float
+                Maximum height (Y coordinate) to be considered
     
     Returns:
         numpy.ndarray: Occupancy grid with shape (grid_height, grid_width)
@@ -183,10 +188,17 @@ def create_top_down_occupancy_grid(points, grid_resolution=GRID_RESOLUTION,
             2: Free to pass
     """
     try:
-        logger.info(f"[OccGrid] Creating occupancy grid: resolution={grid_resolution}m, size={grid_width}x{grid_height} cells")
+        # Extract necessary parameters from grid_params
+        x_min, x_max = grid_params["x_range"]
+        z_min, z_max = grid_params["z_range"]
+        grid_resolution = grid_params["resolution"]  # Correctly get the value of resolution
         
         # Initialization: set all cells to "unknown"
+        grid_height = int((z_max - z_min) / grid_resolution)
+        grid_width = int((x_max - x_min) / grid_resolution)
         grid = np.zeros((grid_height, grid_width), dtype=np.uint8)
+        
+        logger.info(f"[OccGrid] Creating occupancy grid: resolution={grid_resolution}m, size={grid_width}x{grid_height} cells")
         
         # Check for empty point cloud
         if points is None or not isinstance(points, np.ndarray) or points.size == 0:

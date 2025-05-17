@@ -1,26 +1,21 @@
-\
 import argparse
 import json
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
-import japanize_matplotlib # 追加
+import japanize_matplotlib
 from mpl_toolkits.mplot3d import Axes3D
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection # Poly3DCollectionをインポート
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import os
 import sys
+import traceback  # デバッグ用に追加
 
-# 日本語フォントの設定 (WSLにインストールしたフォント名に合わせてください)
-#matplotlib.rcParams['font.family'] = 'Noto Sans CJK JP'
-# または 'IPAPGothic', 'IPAexGothic' など、インストールしたフォントを指定
-
-# プロジェクトルートをPythonパスに追加するための処理
-# このスクリプトがプロジェクトルート直下にあることを想定
+# プロジェクトルートをPythonパスに追加
 project_root = os.path.dirname(os.path.abspath(__file__))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-from depth_processor.point_cloud import depth_to_point_cloud
+from depth_processor.point_cloud import depth_to_point_cloud, create_top_down_occupancy_grid
 from depth_processor.depth_model import convert_to_absolute_depth
 
 def load_config(config_path="config.json"):
@@ -50,34 +45,25 @@ def load_depth_data_from_csv(csv_path):
         print(f"Error loading CSV data: {e}")
         sys.exit(1)
 
-def visualize_point_cloud_3d(points, camera_params_config, depth_grid_shape): # depth_grid_shape を追加
+def visualize_point_cloud_3d(points, camera_params_config, depth_grid_shape):
     """3Dポイントクラウドとカメラ座標系、各種平面をMatplotlibで可視化する"""
-    fig = plt.figure(figsize=(12, 10))
-    ax = fig.add_subplot(111, projection='3d')
-
+    # グラフサイズを調整（画面に収まりやすいサイズに）
+    fig = plt.figure(figsize=(12, 8))
+    
+    # 単一の3Dグラフを使用
+    ax_3d = fig.add_subplot(111, projection='3d')
+    
+    # ==== 3Dビューの設定 === =
     # カメラ座標系の軸を描画
     axis_length = 0.5
-    ax.quiver(0, 0, 0, axis_length, 0, 0, color='r', arrow_length_ratio=0.1, label='Camera X (右)')
-    ax.quiver(0, 0, 0, 0, axis_length, 0, color='g', arrow_length_ratio=0.1, label='Camera Y (下)')
-    ax.quiver(0, 0, 0, 0, 0, axis_length, color='b', arrow_length_ratio=0.1, label='Camera Z (前)')
+    ax_3d.quiver(0, 0, 0, axis_length, 0, 0, color='r', arrow_length_ratio=0.1, label='Camera X (右)')
+    ax_3d.quiver(0, 0, 0, 0, axis_length, 0, color='g', arrow_length_ratio=0.1, label='Camera Y (下)')
+    ax_3d.quiver(0, 0, 0, 0, 0, axis_length, color='b', arrow_length_ratio=0.1, label='Camera Z (前)')
 
-    # カメラスクリーンを表現 (coordinate_systems.py を参考に値を調整)
-    screen_distance = camera_params_config.get("screen_distance", 0.3) # Z軸方向の距離
-    # screen_width と screen_height はポイントクラウドの視野角からある程度推測するか、固定値
-    # ここではCSVの解像度と焦点距離から簡易的に画角を考慮してみる (オプション)
-    # fx = camera_params_config.get("fx_scaled") # スケーリングされたfx
-    # grid_cols = depth_grid_shape[1]
-    # if fx and grid_cols > 0:
-    #     # 簡易的に、スクリーン距離での横幅を計算 (2 * dist * tan(fov_x/2))
-    #     # tan(fov_x/2) = (grid_cols/2) / fx
-    #     screen_width_derived = screen_distance * grid_cols / fx if fx != 0 else 0.8
-    # else:
-    #     screen_width_derived = 0.8
-    # screen_height_derived = screen_width_derived * (depth_grid_shape[0] / depth_grid_shape[1]) if depth_grid_shape[1] > 0 else 0.6
-    
-    # 固定値を使用 (coordinate_systems.py よりスケールを小さく)
-    screen_width = 0.6 # camera_params_config.get("screen_width", screen_width_derived)
-    screen_height = 0.4 # camera_params_config.get("screen_height", screen_height_derived)
+    # カメラスクリーンを表現
+    screen_distance = camera_params_config.get("screen_distance", 0.3)
+    screen_width = 0.6
+    screen_height = 0.4
 
     screen_corners = np.array([
         [-screen_width/2, -screen_height/2, screen_distance],
@@ -87,15 +73,14 @@ def visualize_point_cloud_3d(points, camera_params_config, depth_grid_shape): # 
     ])
     screen_verts = [screen_corners]
     screen_collection = Poly3DCollection(screen_verts, alpha=0.2, color='cyan', label='Camera Screen')
-    ax.add_collection3d(screen_collection)
-    ax.text(0, 0, screen_distance, " Screen", color='black', fontsize=8)
+    ax_3d.add_collection3d(screen_collection)
+    ax_3d.text(0, 0, screen_distance, " Screen", color='black', fontsize=8)
 
-
-    # トップダウングリッドを表現 (coordinate_systems.py を参考に値を調整)
-    grid_y_level = camera_params_config.get("top_down_grid_y_level", 0.5)  # Y軸の値（床の高さなど）
-    grid_size_x = camera_params_config.get("top_down_grid_size_x", 2.0) # X方向のサイズ
-    grid_size_z = camera_params_config.get("top_down_grid_size_z", 3.0) # Z方向のサイズ
-    grid_z_offset = camera_params_config.get("top_down_grid_z_offset", 0.5) # Z方向のオフセット
+    # トップダウングリッドを表現
+    grid_y_level = camera_params_config.get("top_down_grid_y_level", 0.5)
+    grid_size_x = camera_params_config.get("top_down_grid_size_x", 2.0)
+    grid_size_z = camera_params_config.get("top_down_grid_size_z", 3.0)
+    grid_z_offset = camera_params_config.get("top_down_grid_z_offset", 0.5)
 
     grid_corners = np.array([
         [-grid_size_x/2, grid_y_level, grid_z_offset],
@@ -105,34 +90,212 @@ def visualize_point_cloud_3d(points, camera_params_config, depth_grid_shape): # 
     ])
     grid_verts = [grid_corners]
     grid_collection = Poly3DCollection(grid_verts, alpha=0.2, color='lightgreen', label='Top-down Grid')
-    ax.add_collection3d(grid_collection)
-    ax.text(0, grid_y_level, grid_z_offset + grid_size_z/2, " Grid", color='black', fontsize=8)
+    ax_3d.add_collection3d(grid_collection)
+    ax_3d.text(0, grid_y_level, grid_z_offset + grid_size_z/2, " Grid", color='black', fontsize=8)
 
     if points is not None and points.size > 0:
-        # ポイントクラウドのY軸はカメラ座標系に従い下向きが正
-        ax.scatter(points[:, 0], points[:, 1], points[:, 2], s=1, c=points[:, 2], cmap='viridis', alpha=0.7)
+        # ポイントのサイズを大きくする（3Dプロット用）
+        ax_3d.scatter(points[:, 0], points[:, 1], points[:, 2], s=10, c=points[:, 2], cmap='viridis', alpha=0.7, label='Point Cloud')
     else:
         print("No points to visualize or points array is invalid.")
+        
+    # ==== トップダウン投影点の表示を3Dグラフに追加 === =
+    if points is not None and points.size > 0:
+        # トップダウンビューのパラメータ
+        min_height = 0.0   # 検出する最小高さ（床面から）
+        max_height = 1.0   # 検出する最大高さ
+        
+        # トップダウンビューへの点の投影（XZ平面）
+        valid_points = points[(points[:, 1] >= min_height) & (points[:, 1] <= max_height)]
+        if valid_points.size > 0:
+            # 投影点を3Dグラフにプロット（グリッド平面上）
+            ax_3d.scatter(
+                valid_points[:, 0],                    # X座標はそのまま 
+                np.full(valid_points.shape[0], grid_y_level),  # Y座標はグリッド平面のY値に
+                valid_points[:, 2],                    # Z座標はそのまま
+                s=20,                                 # ポイントサイズをさらに大きく
+                c='red', 
+                marker='x',                            # マーカーをXに
+                alpha=0.8,                             # 透明度
+                label='Projected Points'               # ラベル
+            )
+            
+            # サンプル数を調整（データ量が多い場合にはさらに少なく）
+            sample_count = min(30, len(valid_points))
+            sample_indices = np.linspace(0, len(valid_points)-1, sample_count).astype(int)
+            
+            # 元のポイントから投影点への線を描画（選択したサンプルのみ）
+            for i in sample_indices:
+                ax_3d.plot(
+                    [valid_points[i, 0], valid_points[i, 0]],           # X座標（変化なし）
+                    [valid_points[i, 1], grid_y_level],                  # Y座標（元の高さ→グリッド平面）
+                    [valid_points[i, 2], valid_points[i, 2]],           # Z座標（変化なし）
+                    'k:', alpha=0.3                                      # 点線、やや透明
+                )
+            
+            # 占有グリッドの計算と表示
+            resolution = 0.1  # グリッドのセルサイズ（メートル）
 
-    # 軸ラベルとタイトル
-    ax.set_xlabel("X (右)")
-    ax.set_ylabel("Y (下)")
-    ax.set_zlabel("Z (前)")
-    ax.set_title("CSV深度データからの3Dポイントクラウドと座標系")
+            # 実際の点群の範囲を使用してグリッドパラメータを設定
+            if valid_points.size > 0:
+                # 実際のデータから範囲を計算
+                x_min, x_max = np.min(valid_points[:, 0]), np.max(valid_points[:, 0])
+                z_min, z_max = np.min(valid_points[:, 2]), np.max(valid_points[:, 2])
+                
+                # 少し余裕を持たせる
+                x_padding = max(0.2, (x_max - x_min) * 0.1)
+                z_padding = max(0.2, (z_max - z_min) * 0.1)
+                
+                grid_params = {
+                    "x_range": (x_min - x_padding, x_max + x_padding),
+                    "z_range": (z_min - z_padding, z_max + z_padding),
+                    "resolution": resolution,
+                    "y_min": min_height,
+                    "y_max": max_height
+                }
+                
+                # グリッドの範囲をトップダウンプレーンにも反映
+                # グリッド平面も更新
+                updated_grid_corners = np.array([
+                    [grid_params["x_range"][0], grid_y_level, grid_params["z_range"][0]],
+                    [grid_params["x_range"][1], grid_y_level, grid_params["z_range"][0]],
+                    [grid_params["x_range"][1], grid_y_level, grid_params["z_range"][1]],
+                    [grid_params["x_range"][0], grid_y_level, grid_params["z_range"][1]],
+                ])
+                
+                # 既存のグリッド平面を削除して新しいものを表示
+                for collection in ax_3d.collections:
+                    try:
+                        if (hasattr(collection, '_edgecolors') and 
+                            hasattr(collection, '_facecolors') and 
+                            collection._facecolors.size > 0 and
+                            np.array_equal(collection._facecolors[0][:3], matplotlib.colors.to_rgb('lightgreen'))):
+                            collection.remove()
+                    except (IndexError, AttributeError):
+                        continue
+                
+                updated_grid_verts = [updated_grid_corners]
+                updated_grid_collection = Poly3DCollection(updated_grid_verts, alpha=0.2, color='lightgreen', label='Updated Grid')
+                ax_3d.add_collection3d(updated_grid_collection)
+                
+                # ここに占有グリッドの処理を追加
+                try:
+                    # 占有グリッドの作成
+                    occupancy_grid = create_top_down_occupancy_grid(valid_points, grid_params)
+                    
+                    # グリッドの各セルの中心座標を計算
+                    grid_height, grid_width = occupancy_grid.shape
+                    x_coords = np.linspace(grid_params["x_range"][0], grid_params["x_range"][1], grid_width)
+                    z_coords = np.linspace(grid_params["z_range"][0], grid_params["z_range"][1], grid_height)
+                    
+                    print(f"占有グリッドの形状: {occupancy_grid.shape}, 占有セル数: {np.sum(occupancy_grid > 0)}")
+                    
+                    # 占有セルをグリッド平面上に表示
+                    for i in range(grid_height):
+                        for j in range(grid_width):
+                            if occupancy_grid[i, j] > 0:  # 占有されているセル
+                                x_center = x_coords[j]
+                                z_center = z_coords[i]
+                                
+                                # セルの4隅の座標 - 最後の点の座標を修正
+                                cell_corners = np.array([
+                                    [x_center - resolution/2, grid_y_level, z_center - resolution/2],
+                                    [x_center + resolution/2, grid_y_level, z_center - resolution/2],
+                                    [x_center + resolution/2, grid_y_level, z_center + resolution/2],
+                                    [x_center - resolution/2, grid_y_level, z_center + resolution/2]  # この行を修正
+                                ])
+                                
+                                # セルを半透明の四角形として描画
+                                cell_verts = [cell_corners]
+                                # 占有度に応じた色を使用
+                                color_value = min(1.0, occupancy_grid[i, j] / np.max(occupancy_grid))
+                                cell_color = plt.cm.hot(color_value)  # より目立つカラーマップを使用
+                                cell_collection = Poly3DCollection(cell_verts, alpha=0.7, facecolor=cell_color)
+                                ax_3d.add_collection3d(cell_collection)
+                    
+                    # 投影点の座標範囲を出力
+                    print("投影点の座標範囲:")
+                    print(f"  X: {np.min(valid_points[:, 0]):.4f} ～ {np.max(valid_points[:, 0]):.4f}")
+                    print(f"  Z: {np.min(valid_points[:, 2]):.4f} ～ {np.max(valid_points[:, 2]):.4f}")
+                    print(f"占有グリッドのパラメータ:")
+                    print(f"  X範囲: {grid_params['x_range']}")
+                    print(f"  Z範囲: {grid_params['z_range']}")
+                    print(f"  解像度: {grid_params['resolution']}")
+                    
+                except Exception as e:
+                    print(f"占有グリッド作成エラー: {e}")
+                    traceback.print_exc()  # 詳細なエラー情報を表示
+    
+    # 軸ラベルとタイトル（3D）
+    ax_3d.set_xlabel("X (右)")
+    ax_3d.set_ylabel("Y (下)")
+    ax_3d.set_zlabel("Z (前)")
+    ax_3d.set_title("3Dポイントクラウドとトップダウン投影")
 
-    # 視点調整 (Y軸下向きを考慮)
-    ax.view_init(elev=-24, azim=-170, roll=85) # 前から見る
-    # ax.view_init(elev=20, azim=-75) # 少し上から斜め
-    # ax.view_init(elev=0, azim=-90) # 真横から (X-Z平面)
-    # ax.view_init(elev=-90, azim=-90) # 真下から (X-Z平面、トップダウンに近いがY軸反転)
-
-    # 軸の範囲設定 (ポイントクラウドや平面に合わせて調整)
-    # ax.set_xlim([-1.5, 1.5])
-    # ax.set_ylim([-0.5, 1.5]) # Y軸下向きなので、-0.5 (上) から 1.5 (下)
-    # ax.set_zlim([0, 3.5])
-    # ax.set_box_aspect([3, 2, 3.5]) # X, Y, Z の軸スケール比
-
-    plt.legend()
+    # 視点調整（見やすい角度に設定）
+    ax_3d.view_init(elev=30, azim=-135)
+    
+    # 軸の範囲を調整（全体を表示するために少し広めに）
+    if points is not None and points.size > 0:
+        # データに基づいて軸範囲を設定
+        x_min, x_max = np.min(points[:, 0]), np.max(points[:, 0])
+        y_min, y_max = np.min(points[:, 1]), np.max(points[:, 1])
+        z_min, z_max = np.min(points[:, 2]), np.max(points[:, 2])
+        
+        # 余裕を持たせる
+        x_padding = (x_max - x_min) * 0.1
+        y_padding = (y_max - y_min) * 0.1
+        z_padding = (z_max - z_min) * 0.1
+        
+        ax_3d.set_xlim([x_min - x_padding, x_max + x_padding])
+        ax_3d.set_ylim([y_min - y_padding, y_max + y_padding])
+        ax_3d.set_zlim([z_min - z_padding, z_max + z_padding])
+    else:
+        ax_3d.set_xlim([-grid_size_x/2-0.3, grid_size_x/2+0.3])
+        ax_3d.set_ylim([-0.3, 1.3])
+        ax_3d.set_zlim([0, grid_size_z+0.3])
+    
+    # レジェンドと全体の調整
+    ax_3d.legend(loc='upper right')
+    
+    # グリッド表示
+    ax_3d.grid(True)
+    
+    # マウスホイールによるズーム対応
+    def on_scroll(event):
+        # ホイールの方向に応じてズーム倍率を決定
+        zoom_factor = 0.9 if event.button == 'down' else 1.1
+        
+        # 現在の軸の範囲を取得
+        x_min, x_max = ax_3d.get_xlim()
+        y_min, y_max = ax_3d.get_ylim()
+        z_min, z_max = ax_3d.get_zlim()
+        
+        # 新しい範囲を計算（中心点を基準にズーム）
+        x_center = (x_min + x_max) / 2
+        y_center = (y_min + y_max) / 2
+        z_center = (z_min + z_max) / 2
+        
+        x_range = (x_max - x_min) / 2 * zoom_factor
+        y_range = (y_max - y_min) / 2 * zoom_factor
+        z_range = (z_max - z_min) / 2 * zoom_factor
+        
+        # 新しい範囲を設定
+        ax_3d.set_xlim([x_center - x_range, x_center + x_range])
+        ax_3d.set_ylim([y_center - y_range, y_center + y_range])
+        ax_3d.set_zlim([z_center - z_range, z_center + z_range])
+        
+        fig.canvas.draw_idle()
+    
+    # ズーム用のスクロールイベントを接続
+    fig.canvas.mpl_connect('scroll_event', on_scroll)
+    
+    # 座標変換の説明テキスト
+    fig.text(0.02, 0.02, '''座標系: 
+- カメラ座標系: X(右), Y(下), Z(前)
+- 投影点: カメラ座標系の点をY=固定値の平面に投影
+- 操作: マウスホイールでズーム''', fontsize=10)
+    
     plt.tight_layout()
     plt.show()
 
@@ -145,30 +308,24 @@ if __name__ == "__main__":
     config = load_config(args.config)
     
     # カメラと深度設定の取得
-    # camera_config = config.get("camera", {}) # あまり使わないかも
     depth_config = config.get("depth", {})
 
     fx = depth_config.get("fx")
     fy = depth_config.get("fy")
     cx = depth_config.get("cx")
     cy = depth_config.get("cy")
-    scaling_factor = depth_config.get("scaling_factor") # convert_to_absolute_depthで使う
-    
-    # config.json内のwidth, heightはモデルの入力解像度を指すことが多い
-    # ポイントクラウド生成時の original_width, original_height は、fx,fy,cx,cyがどの解像度に対応するかの情報
+    scaling_factor = depth_config.get("scaling_factor")
     original_width = depth_config.get("width") 
     original_height = depth_config.get("height")
 
     if not all([fx, fy, cx, cy, scaling_factor, original_width, original_height]):
-        print("エラー: 設定ファイルに必要なカメラパラメータ (fx, fy, cx, cy, scaling_factor, width, height) が見つかりません。")
+        print("エラー: 設定ファイルに必要なカメラパラメータが見つかりません。")
         sys.exit(1)
 
     depth_data_raw = load_depth_data_from_csv(args.csv_file)
     
-    # scaling_factor がリストや数値でない場合の対応を追加
+    # scaling_factorの処理
     if isinstance(scaling_factor, list):
-        # リストの場合、適切な値を選択するか、エラー処理
-        # ここでは仮に最初の値を使用するか、あるいは特定のロジックが必要
         if len(scaling_factor) > 0:
             s_factor = scaling_factor[0] 
             print(f"Warning: scaling_factor is a list, using the first element: {s_factor}")
@@ -182,35 +339,22 @@ if __name__ == "__main__":
         sys.exit(1)
 
     depth_absolute = convert_to_absolute_depth(depth_data_raw, s_factor)
-
-    # depth_to_point_cloud に渡すカメラパラメータを辞書にまとめる
-    # スケーリングされた内部パラメータを計算
-    # fx, fy, cx, cy は original_width, original_height における値
-    # depth_data_raw.shape[1] (cols), depth_data_raw.shape[0] (rows) はCSVの解像度
     
-    # CSVの解像度とconfigの解像度が異なる場合、焦点距離と光軸中心をスケーリングする必要がある
+    # CSVの解像度とconfigの解像度のスケール調整
     grid_rows, grid_cols = depth_data_raw.shape
     
     fx_scaled = fx * (grid_cols / original_width) if original_width > 0 else fx
     fy_scaled = fy * (grid_rows / original_height) if original_height > 0 else fy
     cx_scaled = cx * (grid_cols / original_width) if original_width > 0 else cx
     cy_scaled = cy * (grid_rows / original_height) if original_height > 0 else cy
-
-    # camera_params_for_pc は直接使わなくなるか、他の目的で使用
-    # camera_params_for_pc = {
-    #     "fx": fx_scaled,
-    #     "fy": fy_scaled,
-    #     "cx": cx_scaled,
-    #     "cy": cy_scaled,
-    #     "is_grid_data": True 
-    # }
     
-    # visualize_point_cloud_3d に渡す設定用辞書にも追加しておく
     camera_params_config_vis = {
-        "fx_scaled": fx_scaled, "fy_scaled": fy_scaled, "cx_scaled": cx_scaled, "cy_scaled": cy_scaled,
-        "screen_distance": 0.3, # 例: スクリーンのZ位置
-        "top_down_grid_y_level": 0.5, # 例: グリッドのYレベル (床面など)
-        # 他の平面表示用パラメータもここに追加可能
+        "fx_scaled": fx_scaled, 
+        "fy_scaled": fy_scaled, 
+        "cx_scaled": cx_scaled, 
+        "cy_scaled": cy_scaled,
+        "screen_distance": 0.3,
+        "top_down_grid_y_level": 0.5,
     }
 
     points = depth_to_point_cloud(
@@ -219,7 +363,12 @@ if __name__ == "__main__":
         fy=fy_scaled,
         cx=cx_scaled,
         cy=cy_scaled,
-        is_grid_data=True # CSVデータはグリッドデータとして扱う
+        is_grid_data=True
     )
     
-    visualize_point_cloud_3d(points, camera_params_config_vis, depth_data_raw.shape) # depth_grid_shape を渡す
+    # 単一の関数呼び出しで全ての処理を行う
+    visualize_point_cloud_3d(points, camera_params_config_vis, depth_data_raw.shape)
+
+    # ここ以降のすべてのコードを削除
+    # 占有グリッドの計算と表示は関数内で完結させる
+
