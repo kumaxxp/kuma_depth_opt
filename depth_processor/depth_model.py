@@ -350,8 +350,9 @@ def convert_to_absolute_depth(depth_map, config: dict, is_compressed_grid: bool)
                 fb_shape = (fb_h, fb_w)
             return np.ones(fb_shape, dtype=np.float32) * 3.0
         
-        valid_mask = depth_map > 0.01 
-        
+        # valid_mask = depth_map > 0.01 # Original line
+        valid_mask = np.isfinite(depth_map) & (depth_map > 0.01) # MODIFIED: Exclude NaN and Inf
+
         valid_count = np.sum(valid_mask)
         if depth_map.size > 0: # Should always be true if we passed the earlier check
             valid_percentage = valid_count * 100.0 / depth_map.size

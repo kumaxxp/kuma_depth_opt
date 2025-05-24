@@ -248,6 +248,9 @@ def test_depth_processor_predict_model_available_mocked(dummy_config_linux, monk
     
     # --- Mocking HAS_AXENGINE and axengine.InferenceSession ---
     monkeypatch.setattr("depth_processor.depth_model.HAS_AXENGINE", True)
+    # --- ADDED: Mock os.path.exists to prevent early exit ---
+    monkeypatch.setattr("depth_processor.depth_model.os.path.exists", lambda path: True)
+
 
     class MockModelInput:
         def __init__(self, name):
