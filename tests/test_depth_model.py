@@ -160,3 +160,206 @@ def test_convert_to_absolute_depth_all_invalid_input(dummy_config_linux):
     assert absolute_depth.shape == invalid_map.shape
     assert np.all(absolute_depth == 3.0) # Should return default depth
 
+@pytest.mark.parametrize("is_compressed", [False, True])
+@pytest.mark.parametrize("invalid_value", [0.0, 0.005, -0.1, np.nan, np.inf])
+def test_convert_to_absolute_depth_various_invalid_inputs(dummy_config_linux, is_compressed, invalid_value):
+    """Test convert_to_absolute_depth with various types of invalid single value inputs."""
+    config = dummy_config_linux
+    model_h = config["depth_model_parameters"]["input_height"]
+    model_w = config["depth_model_parameters"]["input_width"]
+    grid_rows = config["grid_compressor"]["target_rows"]
+    grid_cols = config["grid_compressor"]["target_cols"]
+
+    if is_compressed:
+        input_shape = (grid_rows, grid_cols)
+    else:
+        input_shape = (model_h, model_w)
+
+    # Create an input map filled with the specific invalid value
+    # Handle np.nan and np.inf separately for creation if necessary
+    if np.isnan(invalid_value):
+        invalid_map = np.full(input_shape, np.nan, dtype=np.float32)
+    elif np.isinf(invalid_value):
+        invalid_map = np.full(input_shape, np.inf, dtype=np.float32)
+    else:
+        invalid_map = np.full(input_shape, invalid_value, dtype=np.float32)
+
+    absolute_depth = convert_to_absolute_depth(invalid_map, config, is_compressed_grid=is_compressed)
+    
+    assert absolute_depth.shape == input_shape
+    # Expect fallback to default depth (3.0) or a clipped value if config is extreme
+    # For most invalid inputs, it should be the default_depth_fallback_value (3.0)
+    # If the invalid_value was np.inf, it might get clipped by max_depth_m if logic changes.
+    # Current logic should result in 3.0 for all these invalid inputs as they won't pass `depth_map > 0.01`
+    # or will be handled by NaN/Inf specific checks if any were added to the main function.
+    # Based on current convert_to_absolute_depth, it should return default 3.0.
+    assert np.all(absolute_depth == 3.0)
+
+
+@pytest.mark.parametrize("is_compressed", [False, True])
+def test_convert_to_absolute_depth_extreme_config_values(dummy_config_linux, is_compressed, monkeypatch):
+    """Test convert_to_absolute_depth with extreme configuration values."""
+    config = dummy_config_linux
+    
+    # Modify config for extreme values
+    extreme_depth_processing_config = {
+        "scaling_factor": 1000.0, # Very large scaling
+        "depth_scale": 10.0,      # Very large scale for non-compressed
+        "min_depth_m": 10.0,      # High min depth
+        "max_depth_m": 5.0        # Low max depth (min > max)
+    }
+    monkeypatch.setitem(config, "depth_processing", extreme_depth_processing_config)
+
+    model_h = config["depth_model_parameters"]["input_height"]
+    model_w = config["depth_model_parameters"]["input_width"]
+    grid_rows = config["grid_compressor"]["target_rows"]
+    grid_cols = config["grid_compressor"]["target_cols"]
+
+    if is_compressed:
+        relative_depth_map = np.random.rand(grid_rows, grid_cols).astype(np.float32) * 0.8 + 0.1
+    else:
+        relative_depth_map = np.random.rand(model_h, model_w).astype(np.float32) * 0.8 + 0.1
+        
+    absolute_depth = convert_to_absolute_depth(relative_depth_map, config, is_compressed_grid=is_compressed)
+    
+    assert absolute_depth.shape == relative_depth_map.shape
+    # With min_depth_m = 10.0 and max_depth_m = 5.0, all values should be clipped to max_depth_m (5.0)
+    # because the clipping logic is `np.clip(absolute_depth, min_clip, max_clip)`
+    # if min_clip > max_clip, it effectively clips all values to max_clip if they are below,
+    # or to min_clip if they are above. Given the calculation, values will likely be positive.
+    # The final np.clip(..., 10.0, 5.0) will make all values 5.0.
+    assert np.all(absolute_depth == extreme_depth_processing_config["max_depth_m"])
+
+    # Test with min_depth_m < max_depth_m but still extreme
+    extreme_depth_processing_config_2 = {
+        "scaling_factor": 0.001, # Very small scaling
+        "depth_scale": 0.01,
+        "min_depth_m": 0.01,
+        "max_depth_m": 100.0
+    }
+    monkeypatch.setitem(config, "depth_processing", extreme_depth_processing_config_2)
+    absolute_depth_2 = convert_to_absolute_depth(relative_depth_map, config, is_compressed_grid=is_compressed)
+    assert np.all(absolute_depth_2 >= extreme_depth_processing_config_2["min_depth_m"])
+    assert np.all(absolute_depth_2 <= extreme_depth_processing_config_2["max_depth_m"])
+
+
+def test_depth_processor_predict_model_available_mocked(dummy_config_linux, monkeypatch):
+    """Test predict method when a model is available (mocked)."""
+    
+    # --- Mocking HAS_AXENGINE and axengine.InferenceSession ---
+    monkeypatch.setattr("depth_processor.depth_model.HAS_AXENGINE", True)
+
+    class MockModelInput:
+        def __init__(self, name):
+            self.name = name
+
+    class MockInferenceSession:
+        def __init__(self, model_path):
+            self.model_path = model_path
+            self.inputs = [MockModelInput("input_tensor_name")]
+            self.run_called = False
+            self.run_input_data = None
+
+        def get_inputs(self):
+            return self.inputs
+
+        def run(self, output_names, input_feed):
+            self.run_called = True
+            self.run_input_data = input_feed
+            # Simulate a model output: (1, H, W, 1)
+            # Use dimensions from config for consistency
+            h = dummy_config_linux["depth_model_parameters"]["input_height"]
+            w = dummy_config_linux["depth_model_parameters"]["input_width"]
+            # Create a dummy output similar to what the model might produce
+            # (e.g., values between 0 and 1, or some other range)
+            # For this test, a simple gradient like the dummy data is fine.
+            dummy_output = np.zeros((1, h, w, 1), dtype=np.float32)
+            for y_idx in range(h):
+                value = 0.1 + 0.8 * (y_idx / h) # Normalized 0.1 to 0.9
+                dummy_output[0, y_idx, :, 0] = value
+            return [dummy_output]
+
+    mock_session_instance = MockInferenceSession(dummy_config_linux["depth_model"]["model_path"])
+    
+    # Monkeypatch the InferenceSession constructor
+    monkeypatch.setattr("depth_processor.depth_model.axe.InferenceSession", lambda path: mock_session_instance)
+
+    # --- Test ---
+    processor = DepthProcessor(dummy_config_linux)
+    assert processor.is_available() # Model should now be considered available
+    assert processor.model == mock_session_instance
+    assert processor.input_name == "input_tensor_name"
+
+    dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8) # Example camera frame
+    depth_map, inference_time = processor.predict(dummy_frame)
+
+    assert mock_session_instance.run_called
+    assert "input_tensor_name" in mock_session_instance.run_input_data
+    # Check input tensor properties (shape, dtype)
+    input_tensor = mock_session_instance.run_input_data["input_tensor_name"]
+    expected_h = dummy_config_linux["depth_model_parameters"]["input_height"]
+    expected_w = dummy_config_linux["depth_model_parameters"]["input_width"]
+    assert input_tensor.shape == (1, expected_h, expected_w, 3) # After process_frame
+    assert input_tensor.dtype == np.uint8 # Or whatever process_frame converts to
+
+    # Check output depth_map properties
+    assert depth_map is not None
+    assert depth_map.shape == (1, expected_h, expected_w, 1)
+    assert depth_map.dtype == np.float32
+    assert inference_time > 0 # Should be a small positive value
+
+    # Verify the content of the depth_map (matches the mocked output)
+    # This checks if the output from the mocked model.run is correctly returned
+    assert np.all(depth_map[0,0,:,0] < depth_map[0,-1,:,0]) # Check y-gradient from mock output
+
+
+def test_compress_depth_to_grid_with_nans(dummy_depth_processor, dummy_config_linux):
+    """Test grid compression when input depth map contains NaNs."""
+    model_h = dummy_config_linux["depth_model_parameters"]["input_height"]
+    model_w = dummy_config_linux["depth_model_parameters"]["input_width"]
+    
+    # Create a depth map with some NaNs
+    depth_map_abs = np.array([[ (r+c) for c in range(model_w)] for r in range(model_h)], dtype=np.float32)
+    depth_map_abs[model_h//4, model_w//4] = np.nan # Introduce a NaN
+    depth_map_abs[model_h//2, model_w//2] = np.nan # Introduce another NaN
+
+    grid_config = dummy_config_linux["grid_compressor"].copy() # Use .copy() to avoid modifying fixture
+    grid_config["method"] = "mean" # Explicitly set to mean for np.nanmean behavior
+    
+    # Ensure the logger is accessible or mock it if it causes issues during test
+    # from depth_processor import depth_model
+    # monkeypatch.setattr(depth_model, "logger", MagicMock())
+
+
+    compressed_grid = dummy_depth_processor.compress_depth_to_grid(depth_map_abs, grid_config)
+    
+    assert compressed_grid is not None
+    assert compressed_grid.shape == (grid_config["target_rows"], grid_config["target_cols"])
+    
+    # The current implementation of compress_depth_to_grid uses np.mean, which propagates NaNs.
+    # If a cell's ROI contains only NaNs, or if np.mean is used and any value is NaN, the result is NaN.
+    # The code has a specific check: `if np.isnan(value): compressed_grid[r, c] = 0.0`
+    # So, we expect NaNs to be converted to 0.0 in the output.
+    assert not np.isnan(compressed_grid).any()
+
+    # For a more robust test, we could calculate an expected value for a cell
+    # known to contain a NaN and one known not to.
+    # For now, just checking no NaNs in output is a good first step given the handling.
+    # If a cell's ROI becomes all NaNs, np.mean would be NaN, then converted to 0.0.
+    # If a cell's ROI has some NaNs and some numbers, np.mean is NaN, then converted to 0.0.
+    # This means cells affected by NaNs will become 0.0.
+
+    # Create a map that is ALL NaNs
+    all_nan_map = np.full((model_h, model_w), np.nan, dtype=np.float32)
+    compressed_all_nan_grid = dummy_depth_processor.compress_depth_to_grid(all_nan_map, grid_config)
+    assert compressed_all_nan_grid is not None
+    assert np.all(compressed_all_nan_grid == 0.0) # All cells should be 0.0
+
+# --- Fixture for DepthProcessor with mocked model (if needed for more tests) ---
+# Consider adding a fixture that provides a DepthProcessor with a mocked model
+# if multiple tests need this setup.
+# For now, the test_depth_processor_predict_model_available_mocked handles its own mocking.
+
+# Ensure all existing tests still pass with these additions.
+# (No changes to existing tests, only additions)
+

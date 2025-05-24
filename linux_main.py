@@ -193,7 +193,6 @@ async def get_pointcloud_data():
     )
     logger.info(f"Shape of current_depth_data (output of convert_to_absolute_depth): {current_depth_data.shape}") # 追加
     
-    processing_time_depth_ms = (time.time() - start_time_total) * 1000 # Initial depth processing
     t_depth_end = time.perf_counter()
 
     # 3. Grid Compression (if enabled) & Absolute Depth Conversion
@@ -206,53 +205,45 @@ async def get_pointcloud_data():
     is_input_grid_data_for_pc = False
     
     if grid_compression_config.get("enabled", False):
-        # Compress the relative depth map first
-        # Pass the grid_compression_config to compress_depth_to_grid
-        logger.info("Grid compression enabled. Compressing depth map...")
-        # ここで current_depth_data の形状を再度確認（compress_depth_to_grid の直前）
-        logger.info(f"Shape of current_depth_data BEFORE grid compression: {current_depth_data.shape}") # 追加
+        logger.info("Grid compression enabled. Compressing and converting depth map for PC...")
+        logger.info(f"Shape of current_depth_data BEFORE grid compression: {current_depth_data.shape}")
         
-        compressed_relative_grid = depth_processor_instance.compress_depth_to_grid(current_depth_data, grid_compression_config)
-        if compressed_relative_grid is None:
+        compressed_depth_grid = depth_processor_instance.compress_depth_to_grid(current_depth_data, grid_compression_config)
+        if compressed_depth_grid is None:
             logger.warning("Grid compression failed.")
+            pt_depth_s = t_depth_end - t_depth_start
+            pt_compress_s = time.perf_counter() - t_compress_start
+            pt_total_s = time.perf_counter() - t_start_total
             return PointCloudResponse(
                 timestamp_capture=timestamp_capture, timestamp_processed=time.time(),
-                processing_time_depth=t_depth_end - t_depth_start, 
-                processing_time_compression=time.perf_counter() - t_compress_start, 
+                processing_time_depth=round(pt_depth_s, 4), 
+                processing_time_compression=round(pt_compress_s, 4), 
                 processing_time_pointcloud=0, 
-                processing_time_total=time.perf_counter() - t_start_total,
+                processing_time_total=round(pt_total_s, 4),
                 point_cloud=[], error_message="Grid compression failed"
             )
-        # Then convert the compressed relative grid to absolute depth
-        depth_for_pointcloud_conversion = convert_to_absolute_depth(compressed_relative_grid, config, is_compressed_grid=True)
+        depth_for_pointcloud_conversion = convert_to_absolute_depth(compressed_depth_grid, config, is_compressed_grid=True)
         is_input_grid_data_for_pc = True
     else:
-        # Convert the full relative depth map to absolute depth
-        absolute_depth_map_full = convert_to_absolute_depth(relative_depth_map, config, is_compressed_grid=False)
-        # Ensure it's 2D (H,W) for point cloud function if not grid
-        if absolute_depth_map_full is not None:
-            if len(absolute_depth_map_full.shape) == 4 and absolute_depth_map_full.shape[0] == 1 and absolute_depth_map_full.shape[3] == 1:
-                depth_for_pointcloud_conversion = absolute_depth_map_full.squeeze(axis=(0,3))
-            elif len(absolute_depth_map_full.shape) == 3 and absolute_depth_map_full.shape[2] == 1:
-                depth_for_pointcloud_conversion = absolute_depth_map_full.squeeze(axis=2)
-            elif len(absolute_depth_map_full.shape) == 2:
-                depth_for_pointcloud_conversion = absolute_depth_map_full
-            else:
-                logger.warning(f"Unexpected shape of full absolute depth map: {absolute_depth_map_full.shape}. Cannot proceed.")
-                depth_for_pointcloud_conversion = None
+        logger.info("Grid compression disabled. Using full (absolute) depth map for PC.")
+        # current_depth_data is already the full absolute depth map
+        depth_for_pointcloud_conversion = current_depth_data
         is_input_grid_data_for_pc = False
 
     if depth_for_pointcloud_conversion is None:
         logger.warning("Depth data for point cloud is None after compression/conversion step.")
+        pt_depth_s = t_depth_end - t_depth_start
+        pt_compress_s = time.perf_counter() - t_compress_start
+        pt_total_s = time.perf_counter() - t_start_total
         return PointCloudResponse(
             timestamp_capture=timestamp_capture, timestamp_processed=time.time(),
-            processing_time_depth=t_depth_end - t_depth_start, 
-            processing_time_compression=time.perf_counter() - t_compress_start,
+            processing_time_depth=round(pt_depth_s, 4), 
+            processing_time_compression=round(pt_compress_s, 4),
             processing_time_pointcloud=0, 
-            processing_time_total=time.perf_counter() - t_start_total,
+            processing_time_total=round(pt_total_s, 4),
             point_cloud=[], error_message="Depth processing for PC failed"
         )
-    t_compress_end = time.perf_counter() # Includes absolute conversion time
+    t_compress_end = time.perf_counter() # End of compression and final absolute conversion for PC
 
     # 4. Convert to Point Cloud
     t_pc_start = time.perf_counter()
@@ -264,16 +255,19 @@ async def get_pointcloud_data():
     original_image_height = cam_dims_config.get("height")
     original_image_dims_tuple = None
     if original_image_width and original_image_height:
-        original_image_dims_tuple = (original_image_width, original_image_height)
+        original_image_dims_tuple = (original_image_height, original_image_width) # Corrected order
 
     if is_input_grid_data_for_pc and not original_image_dims_tuple :
         logger.error("Original image dimensions not found in camera config, required for grid to point cloud projection.")
+        pt_depth_s = t_depth_end - t_depth_start
+        pt_compress_s = t_compress_end - t_compress_start
+        pt_total_s = time.perf_counter() - t_start_total
         return PointCloudResponse(
             timestamp_capture=timestamp_capture, timestamp_processed=time.time(),
-            processing_time_depth=t_depth_end - t_depth_start, 
-            processing_time_compression=t_compress_end - t_compress_start,
+            processing_time_depth=round(pt_depth_s, 4), 
+            processing_time_compression=round(pt_compress_s, 4),
             processing_time_pointcloud=0, 
-            processing_time_total=time.perf_counter() - t_start_total,
+            processing_time_total=round(pt_total_s, 4),
             point_cloud=[], error_message="Missing original image dimensions for PC conversion"
         )
 
@@ -282,7 +276,7 @@ async def get_pointcloud_data():
         camera_intrinsics=camera_intrinsics,
         is_grid_data=is_input_grid_data_for_pc,
         grid_config=grid_params_for_pc_func,
-        original_image_dims=original_image_dims_tuple # Pass tuple or None
+        original_image_dims=original_image_dims_tuple 
     )
     t_pc_end = time.perf_counter()
 
@@ -293,16 +287,51 @@ async def get_pointcloud_data():
         pc_list = point_cloud_data.tolist()
         logger.info(f"Generated point cloud with {len(pc_list)} points.")
 
-    t_end_total = time.perf_counter()
-    timestamp_processed = time.time()
+    # 6. Prepare and Return Response
+    t_total_end = time.perf_counter()
+
+    # Calculate all processing times in seconds
+    pt_depth_s = t_depth_end - t_depth_start
+    pt_compress_s = t_compress_end - t_compress_start
+    pt_pc_s = t_pc_end - t_pc_start
+    pt_total_s = t_total_end - t_start_total
+
+    # Convert to milliseconds for logging and sleep calculation consistency
+    processing_time_depth_ms = pt_depth_s * 1000
+    processing_time_compression_ms = pt_compress_s * 1000
+    processing_time_pointcloud_ms = pt_pc_s * 1000
+    processing_time_total_ms = pt_total_s * 1000
+
+
+    logger.info(
+        f"Request processed. Total: {processing_time_total_ms:.2f}ms "
+        f"(Depth: {processing_time_depth_ms:.2f}ms, "
+        f"Compress: {processing_time_compression_ms:.2f}ms, "
+        f"PointCloud: {processing_time_pointcloud_ms:.2f}ms)"
+    )
+
+    # Add a small delay to manage CPU load, based on configured FPS
+    # This is a simplified way to control the rate if the endpoint is called in a loop.
+    # A more robust solution might involve a background task that processes at a fixed rate.
+    target_fps = config.get("camera", {}).get("fps", 10)
+    if target_fps > 0:
+        delay_per_frame_s = 1.0 / target_fps
+        # Calculate how much time is left in the current frame budget using seconds
+        remaining_time_s = delay_per_frame_s - pt_total_s
+        if remaining_time_s > 0:
+            logger.debug(f"Sleeping for {remaining_time_s:.3f} seconds to maintain target FPS.")
+            await asyncio.sleep(remaining_time_s)
+        else:
+            logger.warning(f"Processing took longer ({processing_time_total_ms:.2f}ms) than target frame time ({delay_per_frame_s*1000:.2f}ms). No sleep.")
+
 
     return PointCloudResponse(
         timestamp_capture=timestamp_capture,
-        timestamp_processed=timestamp_processed,
-        processing_time_depth=round(t_depth_end - t_depth_start, 4),
-        processing_time_compression=round(t_compress_end - t_compress_start, 4), 
-        processing_time_pointcloud=round(t_pc_end - t_pc_start, 4),
-        processing_time_total=round(t_end_total - t_start_total, 4),
+        timestamp_processed=time.time(), # Wall-clock time at end of processing
+        processing_time_depth=round(pt_depth_s, 4),
+        processing_time_compression=round(pt_compress_s, 4), 
+        processing_time_pointcloud=round(pt_pc_s, 4),
+        processing_time_total=round(pt_total_s, 4),
         point_cloud=pc_list
     )
 
