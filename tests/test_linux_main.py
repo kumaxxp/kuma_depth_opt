@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 # For now, let's assume direct import and see.
 from linux_main import app, PointCloudResponse
 
-@pytest.fixture(scope="module")
+@pytest.fixture # Default scope is "function"
 def client():
     # The TestClient handles startup and shutdown events by default
     with TestClient(app) as c:
