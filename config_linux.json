@@ -6,7 +6,7 @@
     "fps": 10
   },
   "depth_model": {
-    "model_path": "models/depth_anything_vitl14.pth", 
+    "model_path": "/opt/m5stack/data/depth_anything/compiled.axmodel",
     "model_type": "vitl",
     "device": "cuda" 
   },
