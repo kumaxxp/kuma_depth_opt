@@ -137,9 +137,9 @@ def test_get_pointcloud_success(client, mock_config_data):
                 assert data["point_cloud"] == mock_point_cloud
                 assert "processing_time_total" in data
                 assert data["processing_time_total"] > 0
-                assert "processing_time_capture_s" in data
-                assert "processing_time_depth_s" in data
-                assert "processing_time_pc_s" in data
+                assert "processing_time_depth" in data  # Corrected
+                assert "processing_time_compression" in data  # Added
+                assert "processing_time_pointcloud" in data  # Corrected
                 
                 mock_cam_instance.get_frame.assert_called_once()
                 mock_depth_processor.predict.assert_called_once_with(mock_frame)
