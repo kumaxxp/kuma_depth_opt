@@ -150,19 +150,18 @@ def test_occupancy_grid_and_projection():
         print("Projected points:")
         print(projected_points)
         raise
-    finally:
-        # 常にデバッグ用のデータを返す
-        return occupancy_grid, projected_points
+    # finally:
+    #     # 常にデバッグ用のデータを返す
+    #     return occupancy_grid, projected_points # Removed to address PytestReturnNotNoneWarning
 
 if __name__ == "__main__":
-    occupancy_grid = None
-    projected_points = None
+    # This part might need adjustment if it strictly relied on the return value
+    # For now, it will call the test which performs assertions.
     try:
-        occupancy_grid, projected_points = test_occupancy_grid_and_projection()
+        test_occupancy_grid_and_projection()
+        print("Test execution completed via __main__.")
     except AssertionError as e:
-        print("Test failed. Debugging information:")
-        print("Occupancy grid:")
-        print(occupancy_grid if occupancy_grid is not None else "Occupancy grid is not defined.")
-        print("Projected points:")
-        print(projected_points if projected_points is not None else "Projected points are not defined.")
-        raise
+        print("Test failed when run via __main__.")
+        # Error details are printed within the test function or by the raise
+    except Exception as e:
+        print(f"An unexpected error occurred when run via __main__: {e}")
