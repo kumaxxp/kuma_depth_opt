@@ -8,7 +8,7 @@ from depth_processor.depth_model import DepthProcessor, convert_to_absolute_dept
 # --- Tests for DepthProcessor Class ---
 
 def test_depth_processor_initialization(dummy_config_linux, monkeypatch):
-    \"Test DepthProcessor initialization.\"
+    """Test DepthProcessor initialization."""
     # Ensure HAS_AXENGINE is False for this test to prevent actual model loading attempts
     monkeypatch.setattr("depth_processor.depth_model.HAS_AXENGINE", False)
     processor = DepthProcessor(dummy_config_linux)
@@ -20,9 +20,9 @@ def test_depth_processor_initialization(dummy_config_linux, monkeypatch):
     assert processor.model_input_height == dummy_config_linux["depth_model_parameters"]["input_height"]
 
 def test_depth_processor_process_frame(dummy_depth_processor):
-    \"Test frame preprocessing.\"
+    """Test frame preprocessing."""
     # Create a dummy frame (e.g., 640x480x3)
-    # The actual content doesn\'t matter much for this test, only dimensions and type
+    # The actual content doesn't matter much for this test, only dimensions and type
     original_height, original_width = 480, 640
     dummy_frame = np.random.randint(0, 256, (original_height, original_width, 3), dtype=np.uint8)
     
@@ -35,7 +35,7 @@ def test_depth_processor_process_frame(dummy_depth_processor):
     assert processed_tensor.dtype == np.uint8 # or the type it's converted to if any
 
 def test_depth_processor_predict_dummy_data(dummy_depth_processor, dummy_config_linux):
-    \"Test predict method when model is not available (should return dummy data).\"
+    """Test predict method when model is not available (should return dummy data)."""
     dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
     
     # Ensure model is None to force dummy data generation
@@ -56,7 +56,7 @@ def test_depth_processor_predict_dummy_data(dummy_depth_processor, dummy_config_
 # --- Tests for compress_depth_to_grid Method ---
 
 def test_compress_depth_to_grid_normal_case_mean(dummy_depth_processor, dummy_config_linux):
-    \"Test grid compression with mean method.\"
+    """Test grid compression with mean method."""
     model_h = dummy_config_linux["depth_model_parameters"]["input_height"]
     model_w = dummy_config_linux["depth_model_parameters"]["input_width"]
     
@@ -75,7 +75,7 @@ def test_compress_depth_to_grid_normal_case_mean(dummy_depth_processor, dummy_co
     # If input is a ramp, calculate expected means for a few cells.
 
 def test_compress_depth_to_grid_empty_input(dummy_depth_processor, dummy_config_linux):
-    \"Test grid compression with empty input.\"
+    """Test grid compression with empty input."""
     empty_map = np.array([], dtype=np.float32)
     compressed_grid = dummy_depth_processor.compress_depth_to_grid(empty_map, dummy_config_linux["grid_compressor"])
     assert compressed_grid is None
@@ -85,7 +85,7 @@ def test_compress_depth_to_grid_empty_input(dummy_depth_processor, dummy_config_
     assert compressed_grid_none is None
 
 def test_compress_depth_to_grid_small_input_causes_zero_cell_dim(dummy_depth_processor, dummy_config_linux):
-    \"Test grid compression where input is smaller than target grid, causing zero cell height/width.\"
+    """Test grid compression where input is smaller than target grid, causing zero cell height/width."""
     # Input map smaller than target grid cells
     depth_map_abs = np.ones((dummy_config_linux["grid_compressor"]["target_rows"] -1, 
                                dummy_config_linux["grid_compressor"]["target_cols"]-1), dtype=np.float32)
@@ -98,7 +98,7 @@ def test_compress_depth_to_grid_small_input_causes_zero_cell_dim(dummy_depth_pro
 
 @pytest.mark.parametrize("is_compressed", [False, True])
 def test_convert_to_absolute_depth_normal_case(dummy_config_linux, is_compressed):
-    \"Test absolute depth conversion for full and compressed maps.\"
+    """Test absolute depth conversion for full and compressed maps."""
     config = dummy_config_linux
     model_h = config["depth_model_parameters"]["input_height"]
     model_w = config["depth_model_parameters"]["input_width"]
@@ -130,13 +130,13 @@ def test_convert_to_absolute_depth_normal_case(dummy_config_linux, is_compressed
     assert np.all(absolute_depth <= max_expected_val) 
 
 def test_convert_to_absolute_depth_empty_input(dummy_config_linux):
-    \"Test absolute depth conversion with empty input.\"
+    """Test absolute depth conversion with empty input."""
     empty_map = np.array([], dtype=np.float32)
     config = dummy_config_linux
     abs_depth_empty = convert_to_absolute_depth(empty_map, config, is_compressed_grid=False)
     
     # Determine expected fallback shape
-    model_params_conf = config.get("depth_model_parameters", {})
+    model_params_conf = config.get("depth_model_parameters", { })
     fb_h = model_params_conf.get("input_height", 256)
     fb_w = model_params_conf.get("input_width", 384)
     expected_fallback_shape = (fb_h, fb_w)
@@ -149,7 +149,7 @@ def test_convert_to_absolute_depth_empty_input(dummy_config_linux):
     assert np.all(abs_depth_none == 3.0)
 
 def test_convert_to_absolute_depth_all_invalid_input(dummy_config_linux):
-    \"Test with input where all values are <= 0.01 (considered invalid).\"
+    """Test with input where all values are <= 0.01 (considered invalid)."""
     config = dummy_config_linux
     model_h = config["depth_model_parameters"]["input_height"]
     model_w = config["depth_model_parameters"]["input_width"]
