@@ -168,11 +168,29 @@ def test_get_pointcloud_success(client, mock_config_data):
 
             MockDepthToPointCloud.assert_called_once()
             args_pc, kwargs_pc = MockDepthToPointCloud.call_args
-            # The first argument to depth_to_point_cloud is depth_for_pointcloud_conversion
-            # which is the result of the last call to convert_to_absolute_depth (i.e., mock_depth_map_for_conversion)
-            assert np.array_equal(args_pc[0], mock_depth_map_for_conversion)
-            assert args_pc[1] == mock_config_data["point_cloud"]["camera_intrinsics"]
-            assert args_pc[2] == (mock_config_data["camera"]["height"], mock_config_data["camera"]["width"])
+            
+            # Assert that all arguments were passed as keyword arguments
+            assert not args_pc, "Expected no positional arguments for depth_to_point_cloud"
+
+            # Assert depth_data
+            assert np.array_equal(kwargs_pc.get('depth_data'), mock_depth_map_for_conversion)
+
+            # Assert camera_intrinsics
+            assert kwargs_pc.get('camera_intrinsics') == mock_config_data["point_cloud"]["camera_intrinsics"]
+
+            # Assert is_grid_data (based on mock_config_data's grid_compression.enabled)
+            expected_is_grid_data = mock_config_data.get("grid_compression", {}).get("enabled", False)
+            assert kwargs_pc.get('is_grid_data') == expected_is_grid_data
+
+            # Assert original_image_dims
+            expected_original_image_dims = (mock_config_data["camera"]["height"], mock_config_data["camera"]["width"])
+            assert kwargs_pc.get('original_image_dims') == expected_original_image_dims
+
+            # Assert grid_config
+            if expected_is_grid_data:
+                assert kwargs_pc.get('grid_config') == mock_config_data["grid_compression"]
+            else:
+                assert kwargs_pc.get('grid_config') is None
 
 
 # More tests will be added here.
