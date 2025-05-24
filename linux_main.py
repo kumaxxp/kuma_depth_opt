@@ -172,16 +172,30 @@ async def get_pointcloud_data():
     t_depth_start = time.perf_counter()
     relative_depth_map, _ = depth_processor_instance.predict(frame)
     if relative_depth_map is None:
-        logger.warning("Depth estimation failed (returned None).")
+        logger.error("Depth prediction failed.")
         return PointCloudResponse(
             timestamp_capture=timestamp_capture, timestamp_processed=time.time(),
-            processing_time_depth=time.perf_counter() - t_depth_start, 
-            processing_time_compression=0, processing_time_pointcloud=0, 
-            processing_time_total=time.perf_counter() - t_start_total,
-            point_cloud=[], error_message="Depth estimation failed"
+            processing_time_depth=0, processing_time_compression=0,
+            processing_time_pointcloud=0, processing_time_total=time.perf_counter() - t_start_total,
+            point_cloud=[], error_message="Depth prediction failed"
         )
-    t_depth_end = time.perf_counter()
+    logger.info(f"Shape of relative_depth_map from predict: {relative_depth_map.shape}") # 追加
+
+    # Squeeze to (H, W) for absolute depth conversion and potentially full point cloud
+    relative_depth_map_squeezed = np.squeeze(relative_depth_map)
+    logger.info(f"Shape of relative_depth_map_squeezed: {relative_depth_map_squeezed.shape}") # 追加
+
+    # Convert relative depth to absolute depth (meters)
+    current_depth_data = convert_to_absolute_depth(
+        relative_depth_map_squeezed,
+        config,
+        is_compressed_grid=False 
+    )
+    logger.info(f"Shape of current_depth_data (output of convert_to_absolute_depth): {current_depth_data.shape}") # 追加
     
+    processing_time_depth_ms = (time.time() - start_time_total) * 1000 # Initial depth processing
+    t_depth_end = time.perf_counter()
+
     # 3. Grid Compression (if enabled) & Absolute Depth Conversion
     t_compress_start = time.perf_counter()
     grid_compression_config = config.get("grid_compression", {})
@@ -194,7 +208,11 @@ async def get_pointcloud_data():
     if grid_compression_config.get("enabled", False):
         # Compress the relative depth map first
         # Pass the grid_compression_config to compress_depth_to_grid
-        compressed_relative_grid = depth_processor_instance.compress_depth_to_grid(relative_depth_map, grid_compression_config)
+        logger.info("Grid compression enabled. Compressing depth map...")
+        # ここで current_depth_data の形状を再度確認（compress_depth_to_grid の直前）
+        logger.info(f"Shape of current_depth_data BEFORE grid compression: {current_depth_data.shape}") # 追加
+        
+        compressed_relative_grid = depth_processor_instance.compress_depth_to_grid(current_depth_data, grid_compression_config)
         if compressed_relative_grid is None:
             logger.warning("Grid compression failed.")
             return PointCloudResponse(
