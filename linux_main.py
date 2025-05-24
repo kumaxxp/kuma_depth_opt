@@ -1,5 +1,3 @@
-\
-# filepath: c:\\work\\kuma_depth_opt\\linux_main.py
 import asyncio
 import cv2
 import numpy as np
@@ -7,7 +5,8 @@ import time
 import logging
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, AsyncGenerator # AsyncGenerator をインポート
+from contextlib import asynccontextmanager # asynccontextmanager をインポート
 
 try:
     from utils import load_config
@@ -48,7 +47,60 @@ class PointCloudResponse(BaseModel):
     error_message: Optional[str] = None
 
 # --- FastAPI App ---
-app = FastAPI(title="Depth Point Cloud API")
+# app = FastAPI(title="Depth Point Cloud API") # 古い初期化をコメントアウト
+
+# --- Lifespan Event Handler ---
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    # Startup
+    global config, depth_processor_instance, camera_capture
+    logger.info("Linux module starting up (lifespan)...")
+    try:
+        config = load_config(CONFIG_PATH)
+        if not config:
+            logger.critical(f"CRITICAL: Failed to load configuration from {CONFIG_PATH}. Application cannot start correctly.")
+            raise RuntimeError(f"Configuration load failed from {CONFIG_PATH}")
+        logger.info("Configuration loaded successfully.")
+        
+        log_level_str = config.get("logging", {}).get("level", "INFO").upper()
+        log_level = getattr(logging, log_level_str, logging.INFO)
+        logger.setLevel(log_level)
+        for handler in logger.handlers:
+            handler.setLevel(log_level)
+        logger.info(f"Logger level set to {log_level_str}")
+
+        depth_processor_instance = initialize_depth_model(config)
+        if not depth_processor_instance or not depth_processor_instance.is_available():
+            logger.warning("Depth processor could not be initialized or is not available.")
+        else:
+            logger.info("Depth processor initialized successfully.")
+
+        camera_cfg = config.get("camera")
+        if camera_cfg:
+            try:
+                camera_capture = CamInput(camera_cfg)
+                logger.info("Camera input module initialized.")
+            except IOError as e:
+                logger.error(f"Failed to initialize camera: {e}. Camera input will not be available.")
+                camera_capture = None
+        else:
+            logger.error("Camera configuration not found. Camera input will not be available.")
+            camera_capture = None
+    except Exception as e:
+        logger.critical(f"Critical error during startup: {e}", exc_info=True)
+        raise
+
+    yield  # アプリケーション実行
+
+    # Shutdown
+    logger.info("Linux module shutting down (lifespan)...")
+    if camera_capture:
+        camera_capture.release()
+    if depth_processor_instance:
+        depth_processor_instance.release()
+    logger.info("Shutdown complete.")
+
+app = FastAPI(title="Depth Point Cloud API", lifespan=lifespan) # lifespan を使用して FastAPI アプリを初期化
 
 # --- Modules ---
 class CamInput:
@@ -88,58 +140,58 @@ class CamInput:
             logger.info("Camera released.")
 
 # --- FastAPI Events ---
-@app.on_event("startup")
-async def startup_event():
-    global config, depth_processor_instance, camera_capture
-    try:
-        logger.info("Linux module starting up...")
-        config = load_config(CONFIG_PATH)
-        if not config:
-            logger.critical(f"CRITICAL: Failed to load configuration from {CONFIG_PATH}. Application cannot start correctly.")
-            raise RuntimeError(f"Configuration load failed from {CONFIG_PATH}")
-        logger.info("Configuration loaded successfully.")
-        
-        # Set log level from config if specified
-        log_level_str = config.get("logging", {}).get("level", "INFO").upper()
-        log_level = getattr(logging, log_level_str, logging.INFO)
-        logger.setLevel(log_level)
-        for handler in logger.handlers: # Apply to existing handlers too
-            handler.setLevel(log_level)
-        logger.info(f"Logger level set to {log_level_str}")
-
-        # depth_model_cfg = config.get("depth_model", {}) # Not used directly here
-        depth_processor_instance = initialize_depth_model(config) # Pass the whole config
-        
-        if not depth_processor_instance or not depth_processor_instance.is_available():
-            logger.warning("Depth processor could not be initialized or is not available. API might return dummy data or limited functionality.")
-        else:
-            logger.info("Depth processor initialized successfully.")
-
-        camera_cfg = config.get("camera")
-        if camera_cfg:
-            try:
-                camera_capture = CamInput(camera_cfg)
-                logger.info("Camera input module initialized.")
-            except IOError as e:
-                logger.error(f"Failed to initialize camera: {e}. Camera input will not be available.")
-                camera_capture = None # Ensure it's None if failed
-        else:
-            logger.error("Camera configuration not found. Camera input will not be available.")
-            camera_capture = None
-
-    except Exception as e:
-        logger.critical(f"Critical error during startup: {e}", exc_info=True)
-        # Depending on deployment, might want to sys.exit(1) or let orchestrator handle
-        raise # Re-raise to stop FastAPI startup if critical
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    logger.info("Linux module shutting down...")
-    if camera_capture:
-        camera_capture.release()
-    if depth_processor_instance:
-        depth_processor_instance.release() # depth_processor_instance の解放を追加
-    logger.info("Shutdown complete.")
+# @app.on_event("startup") # 古いイベントハンドラをコメントアウト
+# async def startup_event():
+#     global config, depth_processor_instance, camera_capture
+#     try:
+#         logger.info("Linux module starting up...")
+#         config = load_config(CONFIG_PATH)
+#         if not config:
+#             logger.critical(f"CRITICAL: Failed to load configuration from {CONFIG_PATH}. Application cannot start correctly.")
+#             raise RuntimeError(f"Configuration load failed from {CONFIG_PATH}")
+#         logger.info("Configuration loaded successfully.")
+#         
+#         # Set log level from config if specified
+#         log_level_str = config.get("logging", {}).get("level", "INFO").upper()
+#         log_level = getattr(logging, log_level_str, logging.INFO)
+#         logger.setLevel(log_level)
+#         for handler in logger.handlers: # Apply to existing handlers too
+#             handler.setLevel(log_level)
+#         logger.info(f"Logger level set to {log_level_str}")
+# 
+#         # depth_model_cfg = config.get("depth_model", {}) # Not used directly here
+#         depth_processor_instance = initialize_depth_model(config) # Pass the whole config
+#         
+#         if not depth_processor_instance or not depth_processor_instance.is_available():
+#             logger.warning("Depth processor could not be initialized or is not available. API might return dummy data or limited functionality.")
+#         else:
+#             logger.info("Depth processor initialized successfully.")
+# 
+#         camera_cfg = config.get("camera")
+#         if camera_cfg:
+#             try:
+#                 camera_capture = CamInput(camera_cfg)
+#                 logger.info("Camera input module initialized.")
+#             except IOError as e:
+#                 logger.error(f"Failed to initialize camera: {e}. Camera input will not be available.")
+#                 camera_capture = None # Ensure it\'s None if failed
+#         else:
+#             logger.error("Camera configuration not found. Camera input will not be available.")
+#             camera_capture = None
+# 
+#     except Exception as e:
+#         logger.critical(f"Critical error during startup: {e}", exc_info=True)
+#         # Depending on deployment, might want to sys.exit(1) or let orchestrator handle
+#         raise # Re-raise to stop FastAPI startup if critical
+# 
+# @app.on_event("shutdown") # 古いイベントハンドラをコメントアウト
+# async def shutdown_event():
+#     logger.info("Linux module shutting down...")
+#     if camera_capture:
+#         camera_capture.release()
+#     if depth_processor_instance:
+#         depth_processor_instance.release() # depth_processor_instance の解放を追加
+#     logger.info("Shutdown complete.")
 
 # --- FastAPI Endpoint ---
 @app.get("/pointcloud", response_model=PointCloudResponse)
