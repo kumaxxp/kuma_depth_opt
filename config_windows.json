@@ -1,0 +1,18 @@
+{
+  "server": {
+    "host": "192.168.1.100", 
+    "port": 8000,
+    "endpoint": "/pointcloud"
+  },
+  "client": {
+    "polling_interval_ms": 200, 
+    "request_timeout_s": 1.0
+  },
+  "visualization": {
+    "plot_limit_x_m": [-2.0, 2.0],
+    "plot_limit_y_m": [-2.0, 2.0],
+    "plot_limit_z_m": [0.1, 5.0],
+    "point_size": 5, 
+    "point_color": "green"
+  }
+}

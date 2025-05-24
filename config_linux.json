@@ -1,0 +1,32 @@
+{
+  "camera": {
+    "device_id": 0,
+    "width": 640,
+    "height": 480,
+    "fps": 10
+  },
+  "depth_model": {
+    "model_path": "models/depth_anything_vitl14.pth", 
+    "model_type": "vitl",
+    "device": "cuda" 
+  },
+  "grid_compression": {
+    "enabled": true,
+    "target_rows": 8,
+    "target_cols": 6,
+    "method": "mean"
+  },
+  "point_cloud": {
+    "camera_intrinsics": {
+      "fx": 525.0, 
+      "fy": 525.0, 
+      "cx": 319.5, 
+      "cy": 239.5 
+    },
+    "depth_scale": 1000.0 
+  },
+  "api_server": {
+    "host": "0.0.0.0",
+    "port": 8000
+  }
+}

@@ -137,6 +137,19 @@ def load_config(config_path: str = "config.json") -> Dict[str, Any]:
     
     return config
 
+def load_config(config_path: str) -> dict:
+    """指定されたパスからJSON設定ファイルを読み込みます。"""
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        return config
+    except FileNotFoundError:
+        print(f"エラー: 設定ファイルが見つかりません: {config_path}")
+        return {}
+    except json.JSONDecodeError:
+        print(f"エラー: 設定ファイルの内容が不正なJSON形式です: {config_path}")
+        return {}
+
 def optimize_linux_performance():
     """
     Linux パフォーマンス最適化関数

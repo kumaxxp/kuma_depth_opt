@@ -11,155 +11,140 @@ from english_text_utils import setup_matplotlib_english, cv2_put_english_text
 
 # Logger setup
 logger = logging.getLogger("kuma_depth_opt.point_cloud")
+# --- ここから追加 ---
+# logger のレベルを DEBUG に設定
 logger.setLevel(logging.DEBUG)
-# Add handler to standard output if not already set
+# ハンドラが設定されていなければ、標準出力へのハンドラを追加
 if not logger.hasHandlers():
     handler = logging.StreamHandler()
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     handler.setFormatter(formatter)
     logger.addHandler(handler)
-logger.info("Logger for 'kuma_depth_opt.point_cloud' INITIALIZED.")
+# --- ここまで追加 ---
+# logger.info("Logger for \'kuma_depth_opt.point_cloud\' INITIALIZED.") # Already initialized by getLogger
 
-# Default parameters
-GRID_RESOLUTION = 0.06  # meters/cell
-GRID_WIDTH = 100        # number of cells in the horizontal direction
-GRID_HEIGHT = 100       # number of cells in the vertical direction
-HEIGHT_THRESHOLD = 0.3  # height threshold for passability judgment (meters)
-MAX_DEPTH = 6.0         # maximum depth (meters)
-
-def depth_to_point_cloud(depth_data, fx, fy, cx, cy,
-                         original_height=None, original_width=None,
-                         is_grid_data=False, grid_rows=None, grid_cols=None):
+def depth_to_point_cloud(depth_data, camera_intrinsics: dict, is_grid_data: bool = False, grid_config: dict = None, original_image_dims: tuple = None):
     """
     Generate a 3D point cloud from depth data.
     Supports both high-resolution depth maps and compressed grid data.
     
     Args:
         depth_data (numpy.ndarray): Depth data. Full resolution map or compressed grid.
-        fx (float): Focal length of the camera in the horizontal direction.
-        fy (float): Focal length of the camera in the vertical direction.
-        cx (float): Optical center of the camera in the horizontal direction.
-        cy (float): Optical center of the camera in the vertical direction.
-        original_height (int, optional): Height of the original depth map for grid data.
-        original_width (int, optional): Width of the original depth map for grid data.
+        camera_intrinsics (dict): Camera intrinsic parameters (fx, fy, cx, cy).
         is_grid_data (bool): If True, process depth_data as compressed grid.
-        grid_rows (int, optional): Number of rows for grid data.
-        grid_cols (int, optional): Number of columns for grid data.
+        grid_config (dict, optional): Configuration for grid data, including 
+                                      target_rows, target_cols. Required if is_grid_data is True.
+        original_image_dims (tuple, optional): Dimensions (height, width) of the original image. 
+                                             Required if is_grid_data is True and cx, cy 
+                                             in camera_intrinsics are for the original image.
 
     Returns:
         numpy.ndarray: Point cloud data with shape (N, 3). Each point is [x, y, z].
                        Returns an empty array if there are no valid points.
     """
     try:
-        # Debug output
-        logger.debug(f"[PointCloud] Input depth_data shape: {depth_data.shape}, range: {np.min(depth_data):.4f} to {np.max(depth_data):.4f}")
-        logger.debug(f"[PointCloud] Camera params: fx={fx:.1f}, fy={fy:.1f}, cx={cx:.1f}, cy={cy:.1f}")
+        fx = camera_intrinsics.get("fx")
+        fy = camera_intrinsics.get("fy")
+        cx = camera_intrinsics.get("cx")
+        cy = camera_intrinsics.get("cy")
+
+        if not all([fx, fy, cx, cy]):
+            logger.error("[PointCloud] Missing camera intrinsic parameters (fx, fy, cx, cy).")
+            return np.empty((0, 3), dtype=np.float32)
+
+        min_depth_val = np.min(depth_data) if depth_data.size > 0 else 'N/A'
+        max_depth_val = np.max(depth_data) if depth_data.size > 0 else 'N/A'
+        logger.debug(f"[PointCloud] Input depth_data shape: {depth_data.shape}, range: {min_depth_val} to {max_depth_val}")
+        logger.debug(f"[PointCloud] Camera params: fx={fx:.2f}, fy={fy:.2f}, cx={cx:.2f}, cy={cy:.2f}")
         
-        if is_grid_data:
-            logger.debug(f"[PointCloud] Grid mode with rows={grid_rows}, cols={grid_cols}, original size={original_height}x{original_width}")
-        else:
-            logger.debug("[PointCloud] Full resolution mode")
-        
-        # Input validation
         if depth_data is None or depth_data.size == 0:
-            logger.warning("[PointCloud] Error: Empty depth data")
+            logger.warning("[PointCloud] Error: Empty depth data provided.")
             return np.empty((0, 3), dtype=np.float32)
         
+        points = np.empty((0, 3), dtype=np.float32)
+
         if is_grid_data:
-            # Grid data parameter validation
-            if grid_rows is None or grid_cols is None:
-                # Infer from actual data shape
-                grid_rows, grid_cols = depth_data.shape[:2]
-                logger.debug(f"[PointCloud] Using actual grid dimensions: {grid_rows}x{grid_cols}")
+            if grid_config is None:
+                logger.error("[PointCloud] grid_config is required when is_grid_data is True.")
+                return np.empty((0, 3), dtype=np.float32)
             
-            # Directly generate point cloud from compressed data (vectorized for speed)
-            # Create grid indices
-            r_indices, c_indices = np.indices((grid_rows, grid_cols))
+            if original_image_dims is None:
+                logger.error("[PointCloud] original_image_dims is required for grid data when camera_intrinsics (cx, cy) are for the original image.")
+                return np.empty((0, 3), dtype=np.float32)
+
+            original_img_height, original_img_width = original_image_dims
+            logger.debug(f"[PointCloud] Using original_image_dims: {original_img_width}x{original_img_height}")
+
+            grid_rows_config = grid_config.get("target_rows")
+            grid_cols_config = grid_config.get("target_cols")
+
+            if not grid_rows_config or not grid_cols_config:
+                logger.error("[PointCloud] target_rows or target_cols missing in grid_config.")
+                return np.empty((0, 3), dtype=np.float32)
             
-            # Valid depth value determination
-            valid_mask = depth_data > 0.01
+            current_grid_rows, current_grid_cols = depth_data.shape[:2]
+
+            if current_grid_rows != grid_rows_config or current_grid_cols != grid_cols_config:
+                logger.warning(f"[PointCloud] Depth data shape ({current_grid_rows}x{current_grid_cols}) does not match grid_config ({grid_rows_config}x{grid_cols_config}). Using actual depth_data.shape for grid dimensions.")
+
+            logger.debug(f"[PointCloud] Grid mode with actual grid dimensions: rows={current_grid_rows}, cols={current_grid_cols}")
+            
+            r_indices, c_indices = np.indices((current_grid_rows, current_grid_cols))
+            
+            valid_mask = depth_data > 0.01 # Filter out very small or zero depth values
             valid_depth = depth_data[valid_mask]
             
             if valid_depth.size == 0:
-                logger.warning("[PointCloud] No valid depth values in grid data")
+                logger.warning("[PointCloud] No valid depth values (>0.01) in grid data.")
                 return np.empty((0, 3), dtype=np.float32)
                 
-            valid_r = r_indices[valid_mask]
-            valid_c = c_indices[valid_mask]
+            valid_r_grid = r_indices[valid_mask]
+            valid_c_grid = c_indices[valid_mask]
             
-            # Calculate center pixel coordinates corresponding to grid cells
-            u_centers = (valid_c + 0.5)  # Center coordinates on the grid
-            v_centers = (valid_r + 0.5)
+            # Calculate centers of the grid cells
+            u_grid_centers = valid_c_grid + 0.5 
+            v_grid_centers = valid_r_grid + 0.5
             
-            # Calculate 3D coordinates in bulk
-            # Note: cx, cy use the center point of the grid
-            x_values = (u_centers - cx) * valid_depth / fx
-            y_values = (v_centers - cy) * valid_depth / fy
-            z_values = valid_depth
+            # Map grid cell centers to original image pixel coordinates
+            u_original = (u_grid_centers / current_grid_cols) * original_img_width
+            v_original = (v_grid_centers / current_grid_rows) * original_img_height
             
-            # Filter out invalid values
-            valid_idx = ~(np.isnan(x_values) | np.isnan(y_values) | np.isnan(z_values) |
-                          np.isinf(x_values) | np.isinf(y_values) | np.isinf(z_values))
-            valid_idx &= (np.abs(x_values) < 10) & (np.abs(y_values) < 10) & (z_values < 20) & (z_values > 0)
+            Z = valid_depth
+            X = (u_original - cx) * Z / fx
+            Y = (v_original - cy) * Z / fy
             
-            if np.sum(valid_idx) == 0:
-                logger.warning("[PointCloud] No valid points after filtering")
+            points = np.stack((X, Y, Z), axis=-1)
+
+        else: # Full resolution depth map
+            if depth_data.ndim != 2:
+                logger.error(f"[PointCloud] Full resolution depth data must be 2D, but got shape {depth_data.shape}")
                 return np.empty((0, 3), dtype=np.float32)
-                
-            x_values = x_values[valid_idx]
-            y_values = y_values[valid_idx]
-            z_values = z_values[valid_idx]
+
+            height, width = depth_data.shape
             
-            logger.info(f"[PointCloud] Grid mode: {np.sum(valid_idx)}/{valid_mask.sum()} valid points after filtering")
-            
-            # Debug output for compressed data only
-            logger.debug(f"[PointCloud] Compressed grid stats - X: min={np.min(x_values):.2f}, max={np.max(x_values):.2f}")
-            logger.debug(f"[PointCloud] Compressed grid stats - Y: min={np.min(y_values):.2f}, max={np.max(y_values):.2f}")
-            logger.debug(f"[PointCloud] Compressed grid stats - Z: min={np.min(z_values):.2f}, max={np.max(z_values):.2f}")
-            
-            # Stack results
-            points = np.stack((x_values, y_values, z_values), axis=-1)
-            logger.info(f"[PointCloud] Generated {points.shape[0]} points from compressed grid")
-            return points
-            
-        else:
-            # Full resolution depth map processing (vectorized)
-            h, w = depth_data.shape[:2]
-            v_coords, u_coords = np.indices((h, w))
-            
-            valid_mask = depth_data > 0.01  # Target only valid depth points
-            z_values = depth_data[valid_mask]
-            
-            if z_values.size == 0:
-                logger.warning("[PointCloud] No valid depth values found")
+            c_indices, r_indices = np.meshgrid(np.arange(width), np.arange(height))
+
+            valid_mask = depth_data > 0.01 
+            valid_depth = depth_data[valid_mask]
+
+            if valid_depth.size == 0:
+                logger.warning("[PointCloud] No valid depth values (>0.01) in full-resolution data.")
                 return np.empty((0, 3), dtype=np.float32)
             
-            u_values = u_coords[valid_mask]
-            v_values = v_coords[valid_mask]
+            valid_c = c_indices[valid_mask] # u coordinates
+            valid_r = r_indices[valid_mask] # v coordinates
+
+            Z = valid_depth
+            X = (valid_c - cx) * Z / fx
+            Y = (valid_r - cy) * Z / fy
             
-            # Calculate 3D coordinates
-            x_cam = (u_values - cx) * z_values / fx
-            y_cam = (v_values - cy) * z_values / fy
-            
-            # Outlier filtering
-            valid_idx = ~(np.isnan(x_cam) | np.isnan(y_cam) | np.isnan(z_values) | 
-                          np.isinf(x_cam) | np.isinf(y_cam) | np.isinf(z_values))
-            valid_idx &= (np.abs(x_cam) < 10) & (np.abs(y_cam) < 10) & (z_values < 20) & (z_values > 0)
-            
-            x_cam = x_cam[valid_idx]
-            y_cam = y_cam[valid_idx]
-            z_values = z_values[valid_idx]
-            
-            logger.info(f"[PointCloud] Full res mode: {valid_idx.sum()}/{valid_mask.sum()} points after filtering")
-            
-            # Stack results
-            points = np.stack((x_cam, y_cam, z_values), axis=-1)
-            return points
-        
+            points = np.stack((X, Y, Z), axis=-1)
+
+        logger.debug(f"[PointCloud] Generated {points.shape[0]} points.")
+        return points
+
     except Exception as e:
-        logger.error(f"[PointCloud] Error in depth_to_point_cloud: {str(e)}")
-        import traceback
-        logger.debug(traceback.format_exc())
+        logger.error(f"[PointCloud] Error generating point cloud: {e}", exc_info=True)
         return np.empty((0, 3), dtype=np.float32)
 
 def create_top_down_occupancy_grid(points, grid_params):
@@ -179,7 +164,7 @@ def create_top_down_occupancy_grid(points, grid_params):
             y_min : float
                 Minimum height (Y coordinate) to be considered
             y_max : float
-                Maximum height (Y coordinate) to be considered
+                Maximum height (Y Coordinate) to be considered
     
     Returns:
         numpy.ndarray: Occupancy grid with shape (grid_height, grid_width)
@@ -188,278 +173,166 @@ def create_top_down_occupancy_grid(points, grid_params):
             2: Free to pass
     """
     try:
-        # Extract necessary parameters from grid_params
         x_min, x_max = grid_params["x_range"]
         z_min, z_max = grid_params["z_range"]
         grid_resolution = grid_params["resolution"]
-        y_min = grid_params.get("y_min", 0.0)
-        y_max = grid_params.get("y_max", 1.0)
-        use_adaptive_thresholds = grid_params.get("use_adaptive_thresholds", True)
-        obstacle_threshold = grid_params.get("obstacle_threshold", 0.2)
+        y_min_filter = grid_params.get("y_min_filter", -float('inf')) # Renamed from y_min to avoid conflict
+        y_max_filter = grid_params.get("y_max_filter", float('inf')) # Renamed from y_max
+        obstacle_height_threshold = grid_params.get("obstacle_height_threshold", 0.2) # Min height to be obstacle
+        free_space_max_height = grid_params.get("free_space_max_height", 0.1) # Max height to be free space
+
+        grid_height_cells = int(np.ceil((z_max - z_min) / grid_resolution))
+        grid_width_cells = int(np.ceil((x_max - x_min) / grid_resolution))
         
-        # Initialization: set all cells to "unknown"
-        grid_height = int((z_max - z_min) / grid_resolution)
-        grid_width = int((x_max - x_min) / grid_resolution)
-        grid = np.zeros((grid_height, grid_width), dtype=np.uint8)
+        # Initialize grid: 0 for unknown, 1 for occupied, 2 for free
+        occupancy_grid = np.zeros((grid_height_cells, grid_width_cells), dtype=np.uint8)
+        # Store min height per cell to differentiate free vs obstacle
+        min_height_grid = np.full((grid_height_cells, grid_width_cells), np.inf, dtype=np.float32)
+        # Store max height per cell (less critical here but could be useful)
+        # max_height_grid = np.full((grid_height_cells, grid_width_cells), -np.inf, dtype=np.float32)
+
+        logger.info(f"[OccGrid] Creating {grid_width_cells}x{grid_height_cells} grid, res={grid_resolution}m")
         
-        logger.info(f"[OccGrid] Creating occupancy grid: resolution={grid_resolution}m, size={grid_width}x{grid_height} cells")
+        if points is None or points.size == 0:
+            logger.warning("[OccGrid] Empty point cloud, returning empty grid.")
+            return occupancy_grid
+
+        # Filter points by height (Y coordinate in point cloud)
+        # Y is typically vertical/height, X and Z are ground plane
+        valid_height_mask = (points[:, 1] >= y_min_filter) & (points[:, 1] <= y_max_filter)
+        filtered_points = points[valid_height_mask]
+
+        if filtered_points.size == 0:
+            logger.warning("[OccGrid] No points within Y filter range.")
+            return occupancy_grid
+
+        # Convert point coordinates to grid cell indices
+        # X points -> grid_x (columns), Z points -> grid_z (rows)
+        grid_x_indices = ((filtered_points[:, 0] - x_min) / grid_resolution).astype(int)
+        grid_z_indices = ((filtered_points[:, 2] - z_min) / grid_resolution).astype(int)
+        point_heights = filtered_points[:, 1]
+
+        # Filter points that fall outside the defined grid
+        valid_grid_mask = (grid_x_indices >= 0) & (grid_x_indices < grid_width_cells) & \
+                          (grid_z_indices >= 0) & (grid_z_indices < grid_height_cells)
         
-        # Check for empty point cloud
-        if points is None or not isinstance(points, np.ndarray) or points.size == 0:
-            logger.warning("[OccGrid] Empty point cloud, returning default grid")
-            return grid
+        grid_x_indices = grid_x_indices[valid_grid_mask]
+        grid_z_indices = grid_z_indices[valid_grid_mask]
+        point_heights = point_heights[valid_grid_mask]
+
+        if grid_x_indices.size == 0:
+            logger.warning("[OccGrid] No points fall within the grid boundaries after filtering.")
+            return occupancy_grid
+
+        # Populate min_height_grid
+        # This uses a common trick for vectorized minimum: scatter points to a large array then reduce
+        # A simpler loop might be clearer for fewer points, but this can be faster for many.
+        # For loop approach (often clearer and sufficient unless performance is critical):
+        for i in range(len(grid_x_indices)):
+            gx, gz, ph = grid_x_indices[i], grid_z_indices[i], point_heights[i]
+            min_height_grid[gz, gx] = min(min_height_grid[gz, gx], ph)
+            # max_height_grid[gz, gx] = max(max_height_grid[gz, gx], ph)
+            occupancy_grid[gz, gx] = 255 # Mark as having some data initially
+
+        # Classify cells based on min_height_grid
+        # Cells with points but min_height is low -> free space (value 2)
+        # Cells with points and min_height is high -> obstacle (value 1)
+        # Cells with no points (still 0) -> unknown
         
-        logger.debug(f"[OccGrid] Processing {points.shape[0]} points")
-        logger.debug(f"[OccGrid] Point cloud data type: {points.dtype}")
+        # Mask for cells that received any points
+        has_data_mask = occupancy_grid == 255 # Or min_height_grid != np.inf
+
+        # Free cells: has data AND min_height is below free_space_max_height
+        free_mask = has_data_mask & (min_height_grid <= free_space_max_height)
+        occupancy_grid[free_mask] = 2
+
+        # Obstacle cells: has data AND min_height is above obstacle_height_threshold
+        # (and not already marked free, though logic should handle if thresholds overlap)
+        # A point is an obstacle if its lowest part is above the obstacle_threshold.
+        obstacle_mask = has_data_mask & (min_height_grid > obstacle_height_threshold)
+        occupancy_grid[obstacle_mask] = 1
         
-        # 問題箇所①: 座標変換が修正の必要あり
-        # グローバル座標系（XYZ）からグリッド座標系への変換を正しく行う
-        grid_x = ((points[:, 0] - x_min) / grid_resolution).astype(int)
-        grid_z = ((points[:, 2] - z_min) / grid_resolution).astype(int)
-        height = points[:, 1]
-        
-        # Check grid range before processing
-        logger.debug(f"[OccGrid] Grid X range: {np.min(grid_x) if len(grid_x) > 0 else 'N/A'} to {np.max(grid_x) if len(grid_x) > 0 else 'N/A'}, Grid Z range: {np.min(grid_z) if len(grid_z) > 0 else 'N/A'} to {np.max(grid_z) if len(grid_z) > 0 else 'N/A'}")
-        logger.debug(f"[OccGrid] Height range: {np.min(height) if len(height) > 0 else 'N/A'} to {np.max(height) if len(height) > 0 else 'N/A'}")
-        
-        # 高さによるフィルタリングを適用
-        height_filter = (height >= y_min) & (height <= y_max)
-        grid_x = grid_x[height_filter]
-        grid_z = grid_z[height_filter]
-        height = height[height_filter]
-        
-        if len(height) == 0:
-            logger.warning("[OccGrid] No points within height range")
-            return grid
-            
-        # 問題箇所②: 適応的閾値の計算
-        if use_adaptive_thresholds and len(height) > 0:
-            # Check height distribution (important for floor and ceiling detection)
-            height_percentiles = np.percentile(height, [5, 25, 50, 75, 95])
-            logger.debug(f"[OccGrid] Height percentiles [5,25,50,75,95]: {height_percentiles}")
-            
-            # Adaptively determine thresholds from height statistics
-            adaptive_floor_threshold = height_percentiles[0] * 0.7  # 70% of 5th percentile
-            adaptive_obstacle_threshold = height_percentiles[3] * 0.5  # 50% of 75th percentile
-            
-            logger.info(f"[OccGrid] Using adaptive thresholds - floor: {adaptive_floor_threshold:.3f}m, obstacle: {adaptive_obstacle_threshold:.3f}m")
-        else:
-            # 固定閾値を使用
-            adaptive_floor_threshold = y_min
-            adaptive_obstacle_threshold = obstacle_threshold
-            logger.info(f"[OccGrid] Using fixed thresholds - floor: {adaptive_floor_threshold:.3f}m, obstacle: {adaptive_obstacle_threshold:.3f}m")
-        
-        # 問題箇所③: グリッド境界チェック
-        # Process only points within the grid
-        valid_idx = (grid_x >= 0) & (grid_x < grid_width) & (grid_z >= 0) & (grid_z < grid_height)
-        valid_count = np.sum(valid_idx)
-        logger.debug(f"[OccGrid] Valid points in grid: {valid_count}/{len(grid_x)} ({valid_count/len(grid_x)*100 if len(grid_x)>0 else 0:.1f}%)")
-        
-        if valid_count == 0:
-            logger.warning("[OccGrid] No points fall within grid bounds")
-            # 問題箇所④: グリッドが空でもフォールバック処理を行う
-            # 投影点があるにも関わらずグリッドが空なら手動でグリッドを作成
-            if len(height) > 0:
-                logger.info("[OccGrid] Creating manual grid for points that should be within bounds")
-                
-                for i in range(len(grid_x)):
-                    x, z = grid_x[i], grid_z[i]
-                    if 0 <= x < grid_width and 0 <= z < grid_height:
-                        grid[z, x] = 1
-                
-                return grid
-            return grid
-        
-        grid_x = grid_x[valid_idx]
-        grid_z = grid_z[valid_idx]
-        height = height[valid_idx]
-        
-        logger.info(f"[OccGrid] {np.sum(valid_idx)} points within grid bounds")
-        
-        # Option: Use NumPy vectorized processing for faster execution
-        # Create mapping of grid cells to height values
-        unique_cells = {}  # (x, y) -> [heights]
-        
-        for i, (x, z, h) in enumerate(zip(grid_x, grid_z, height)):
-            cell_key = (x, z)
-            if cell_key not in unique_cells:
-                unique_cells[cell_key] = []
-            unique_cells[cell_key].append(h)
-        
-        # Determine classification for each cell
-        logger.debug(f"[OccGrid] Processing {len(unique_cells)} unique grid cells")
-        
-        for (x, z), heights in unique_cells.items():
-            # 各セルに分類を適用 (既存のロジック)
-            # ...existing code...
-            # 基本的には占有セルとして設定
-            grid[z, x] = 1
-        
-        # Simple grid statistics
-        unknown_cells = np.sum(grid == 0)
-        obstacle_cells = np.sum(grid == 1)
-        free_cells = np.sum(grid == 2)
-        logger.info(f"[OccGrid] Grid stats: unknown={unknown_cells}, obstacle={obstacle_cells}, free={free_cells}")
-        
-        return grid
+        # Any remaining cells with data that didn't meet free/obstacle criteria (e.g. between thresholds)
+        # could be marked as unknown or a specific intermediate state. For now, they might remain 255.
+        # Let's ensure they are at least marked as occupied if not free.
+        intermediate_mask = has_data_mask & (occupancy_grid == 255)
+        occupancy_grid[intermediate_mask] = 1 # Default to obstacle if ambiguous and has data
+
+        logger.info(f"[OccGrid] Grid populated. Free: {np.sum(occupancy_grid == 2)}, Obstacle: {np.sum(occupancy_grid == 1)}, Unknown: {np.sum(occupancy_grid == 0)}")
+        return occupancy_grid
         
     except Exception as e:
         logger.error(f"[OccGrid] Error in create_top_down_occupancy_grid: {str(e)}")
         import traceback
         logger.debug(traceback.format_exc())
-        return np.zeros((grid_height, grid_width), dtype=np.uint8)
+        # Return an empty grid of expected type upon error, using calculated dimensions if possible
+        try:
+            ghc = int(np.ceil((grid_params["z_range"][1] - grid_params["z_range"][0]) / grid_params["resolution"]))
+            gwc = int(np.ceil((grid_params["x_range"][1] - grid_params["x_range"][0]) / grid_params["resolution"]))
+            return np.zeros((ghc, gwc), dtype=np.uint8)
+        except:
+            return np.zeros((10,10), dtype=np.uint8) # Fallback fixed size
 
-def visualize_occupancy_grid(occupancy_grid, scale_factor=5):
+
+def visualize_occupancy_grid(occupancy_grid, scale_factor=10):
     """
-    Visualize the occupancy grid. Optimized for compressed data.
+    Visualize the occupancy grid.
     
     Args:
-        occupancy_grid: Occupancy grid (0=unknown, 1=obstacle, 2=free to pass)
-        scale_factor: Factor to enlarge the display
+        occupancy_grid (numpy.ndarray): Occupancy grid (0=unknown, 1=obstacle, 2=free)
+        scale_factor (int): Factor to enlarge the display
     
     Returns:
-        Visualized image
+        numpy.ndarray: Visualized image (BGR)
     """
     try:
-        logger.info(f"[OccVis] Visualizing occupancy grid with shape {occupancy_grid.shape}, scale={scale_factor}")
-        
-        # Grid check
-        if occupancy_grid is None or not isinstance(occupancy_grid, np.ndarray) or occupancy_grid.size == 0:
-            logger.warning("[OccVis] Invalid occupancy grid")
-            return np.zeros((240, 320, 3), dtype=np.uint8)
-        
-        # Output grid statistics
-        unique_values, counts = np.unique(occupancy_grid, return_counts=True)
-        stats = {val: count for val, count in zip(unique_values, counts)}
-        logger.debug(f"[OccVis] Occupancy grid stats: {stats}")
-        
-        # Grid size
+        if occupancy_grid is None or occupancy_grid.size == 0:
+            logger.warning("[OccVis] Empty or invalid occupancy grid for visualization.")
+            return np.full((100, 100, 3), [128,128,128], dtype=np.uint8) # Gray image
+
         grid_h, grid_w = occupancy_grid.shape
-        
-        # Use a larger scale factor for small grids
-        if grid_h < 50 or grid_w < 50:
-            logger.debug(f"[OccVis] Small grid detected, using larger scale factor: {scale_factor}")
-        
-        scaled_h = grid_h * scale_factor
-        scaled_w = grid_w * scale_factor
-        
-        # Create a canvas for display (RGB)
+        logger.info(f"[OccVis] Visualizing {grid_w}x{grid_h} grid with scale {scale_factor}")
+
+        scaled_h, scaled_w = grid_h * scale_factor, grid_w * scale_factor
         visualization = np.zeros((scaled_h, scaled_w, 3), dtype=np.uint8)
-        
-        # Define colors (BGR) - Enhance contrast for visibility
+
         colors = {
-            0: [50, 50, 50],     # Unknown area: dark gray
-            1: [0, 0, 255],      # Obstacle: brighter red
-            2: [0, 255, 0]       # Free to pass: brighter green
+            0: [80, 80, 80],    # Unknown: Dark Gray
+            1: [0, 0, 200],    # Obstacle: Red
+            2: [0, 200, 0],    # Free: Green
+            255: [200,0,200] # Magenta for any unexpected values (e.g. if 255 was used as intermediate)
         }
+
+        for val, color in colors.items():
+            mask = occupancy_grid == val
+            # Efficiently color using repeat and boolean indexing
+            visualization[np.repeat(mask, scale_factor, axis=0).repeat(scale_factor, axis=1)] = color
         
-        # Draw the content of the grid (vectorized for speed)
-        # Create the image all at once with NumPy operations
-        for cell_value, color in colors.items():
-            mask = occupancy_grid == cell_value
-            if np.any(mask):
-                # Expand the mask
-                expanded_mask = np.repeat(np.repeat(mask, scale_factor, axis=0), scale_factor, axis=1)
-                
-                # Apply the color
-                for c_idx, c_val in enumerate(color):
-                    visualization[:, :, c_idx][expanded_mask] = c_val
-        
-        # Draw a point to indicate the vehicle position in the center
-        # Center position in the original grid (calculated for compressed grid)
-        orig_center_x, orig_center_y = grid_w // 2, grid_h - grid_h // 10
-        
-        # Center position after scaling (adjusted to be the center of the cell)
-        center_x = orig_center_x * scale_factor + scale_factor // 2
-        center_y = orig_center_y * scale_factor + scale_factor // 2
-        
-        # Vehicle position marker
-        marker_radius = max(3, scale_factor)
-        cv2.circle(visualization, (center_x, center_y), marker_radius, [255, 255, 255], -1)
-        
-        # Direction arrow
-        arrow_length = max(10, scale_factor * 2)
-        arrow_thickness = max(1, scale_factor // 2)
-        cv2.arrowedLine(visualization,
-                      (center_x, center_y),
-                      (center_x, center_y - arrow_length),
-                      [255, 255, 255],
-                      arrow_thickness,
-                      tipLength=0.3)
-        
-        # Draw grid lines (for visual reference)
-        line_color = [50, 50, 50]  # Darker gray
-        line_thickness = 1
-        
-        # Adjust interval for small grids
-        grid_spacing = max(1, min(5, grid_h // 5))
-        
-        # Draw horizontal and vertical lines
-        for i in range(0, grid_h + 1, grid_spacing):
-            y = i * scale_factor
-            cv2.line(visualization, (0, y), (scaled_w, y), line_color, line_thickness)
-            
-        for j in range(0, grid_w + 1, grid_spacing):
-            x = j * scale_factor
-            cv2.line(visualization, (x, 0), (x, scaled_h), line_color, line_thickness)
-        
-        # Display 1-meter scale
-        meter_text = "1m"
-        # Calculate pixels per meter from grid resolution
-        grid_resolution = 0.1 * 20  # Resolution for compressed grid
-        pixels_per_meter = scale_factor / grid_resolution
-        meter_line_length = int(pixels_per_meter)
-        
-        # Draw scale bar
-        scale_bar_y = scaled_h - 30
-        scale_bar_x = 20
-        cv2.line(visualization, 
-                (scale_bar_x, scale_bar_y), 
-                (scale_bar_x + meter_line_length, scale_bar_y), 
-                [200, 200, 200], 2)
-        # Draw scale text
-        cv2.putText(visualization, meter_text, 
-                   (scale_bar_x + meter_line_length // 2 - 10, scale_bar_y - 5),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, [200, 200, 200], 1)
-        
-        # Add cell statistics
-        unknown_cells = np.sum(occupancy_grid == 0)
-        obstacle_cells = np.sum(occupancy_grid == 1)
-        free_cells = np.sum(occupancy_grid == 2)
-        total_cells = grid_h * grid_w
-        
-        # Use English text utility (instead of Japanese text)
-        try:
-            from english_text_utils import cv2_put_english_text
-            # Free area
-            stats_text = f"Free: {free_cells}/{total_cells} ({free_cells/total_cells*100:.0f}%)"
-            visualization = cv2_put_english_text(visualization, stats_text, (10, 20), 
-                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, [30, 220, 30], 2)
-            
-            # Obstacle area
-            stats_text = f"Obstacle: {obstacle_cells}/{total_cells} ({obstacle_cells/total_cells*100:.0f}%)"
-            visualization = cv2_put_english_text(visualization, stats_text, (10, 45), 
-                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, [0, 50, 220], 2)
-        except ImportError:
-            # If fix_text_encoding module is not available, use English labels
-            logger.debug("fix_text_encoding module not found. Using English labels.")
-            stats_text = f"Free: {free_cells}/{total_cells} ({free_cells/total_cells*100:.0f}%)"
-            cv2.putText(visualization, stats_text, (10, 20), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, [30, 220, 30], 2)
-            
-            stats_text = f"Obstacle: {obstacle_cells}/{total_cells} ({obstacle_cells/total_cells*100:.0f}%)"
-            cv2.putText(visualization, stats_text, (10, 45), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, [0, 50, 220], 2)
-        
-        logger.info(f"[OccVis] Visualization complete: {visualization.shape}")
+        # Optional: Add grid lines for clarity
+        for i in range(0, scaled_w, scale_factor):
+            cv2.line(visualization, (i, 0), (i, scaled_h), (50,50,50), 1)
+        for i in range(0, scaled_h, scale_factor):
+            cv2.line(visualization, (0, i), (scaled_w, i), (50,50,50), 1)
+
+        # Vehicle position marker (example: center bottom)
+        center_x = scaled_w // 2
+        center_y = scaled_h - (scale_factor // 2) # A bit up from the very bottom edge
+        if center_y < 0 : center_y = scaled_h //2 # handle very small grids
+        cv2.circle(visualization, (center_x, center_y), scale_factor // 2 +1 , (255, 255, 255), -1) # White circle
+        # Arrow for direction (pointing "up" in the image, which is typically forward)
+        cv2.arrowedLine(visualization, (center_x, center_y),
+                        (center_x, center_y - scale_factor * 2 if center_y - scale_factor * 2 > 0 else 0),
+                        (255,255,255), max(1,scale_factor//4), tipLength=0.4)
+
+        logger.debug("[OccVis] Visualization generated.")
         return visualization
-        
+
     except Exception as e:
         logger.error(f"[OccVis] Error in visualize_occupancy_grid: {str(e)}")
         import traceback
         logger.debug(traceback.format_exc())
-        return np.zeros((240, 320, 3), dtype=np.uint8)
-        
+        return np.full((100, 100, 3), [0,0,0] , dtype=np.uint8) # Black image on error
+
 # Modified test code
 # Fixed previous issue: h, w = absolute_depth.shape[:2]
 
@@ -481,7 +354,7 @@ if __name__ == "__main__":
                 test_depth[i, j] = 1.0  # Distant background
     
     # Convert to point cloud
-    test_points = depth_to_point_cloud(test_depth, 500, 500)
+    test_points = depth_to_point_cloud(test_depth, {"fx": 500, "fy": 500, "cx": 160, "cy": 120})
     
     # Convert to occupancy grid
     test_grid = create_top_down_occupancy_grid(test_points, 0.05, 200, 200, 0.5)
@@ -494,3 +367,101 @@ if __name__ == "__main__":
     # cv2.imwrite("test_topview.jpg", test_vis)
     
     print("Test completed successfully")
+
+# --- ここから追加 ---
+# Refactored test code to match new function signatures and add more comprehensive tests
+
+if __name__ == "__main__":
+    # Configure logger for testing this script directly
+    if not logger.hasHandlers():
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+
+    logger.info("Testing point_cloud.py functions...")
+
+    # --- Test Case 1: Full Resolution Depth --- 
+    mock_depth_full_res = np.ones((480, 640), dtype=np.float32) * 2.5 # 2.5 meters depth
+    # Add some variation
+    mock_depth_full_res[100:200, 200:300] = 1.0 # Closer object
+    mock_camera_intrinsics_full = {
+        "fx": 500.0, "fy": 500.0, 
+        "cx": 319.5, "cy": 239.5 # Center of 640x480 image
+    }
+    
+    logger.info("\n--- Testing Full Resolution --- ")
+    pc_full = depth_to_point_cloud(mock_depth_full_res, mock_camera_intrinsics_full, is_grid_data=False)
+    if pc_full.size > 0:
+        logger.info(f"Full res point cloud generated: {pc_full.shape[0]} points.")
+        logger.debug(f"Sample points (full res):\n{pc_full[:3]}")
+        logger.debug(f"X range: {np.min(pc_full[:,0]):.2f} to {np.max(pc_full[:,0]):.2f}")
+        logger.debug(f"Y range: {np.min(pc_full[:,1]):.2f} to {np.max(pc_full[:,1]):.2f}")
+        logger.debug(f"Z range: {np.min(pc_full[:,2]):.2f} to {np.max(pc_full[:,2]):.2f}")
+    else:
+        logger.error("Full res point cloud generation FAILED.")
+
+    # --- Test Case 2: Grid Compressed Depth --- 
+    mock_depth_grid = np.ones((12, 16), dtype=np.float32) * 3.0 # 3.0 meters depth for grid cells
+    mock_depth_grid[3:6, 4:8] = 0.8 # Closer group of cells
+    
+    # IMPORTANT: For grid data, cx and cy should ideally be relative to the grid dimensions.
+    # If original cx,cy were 319.5 for a 640 wide image, and grid is 16 cols,
+    # new cx_grid could be (319.5 / 640) * 16 = 7.9875 approx 7.5 (center of 16 cols)
+    # Similarly for cy_grid: (239.5 / 480) * 12 = 5.9875 approx 5.5 (center of 12 rows)
+    # fx_grid = fx_orig * (grid_cols / orig_cols)
+    # fy_grid = fy_orig * (grid_rows / orig_rows)
+    # However, the problem description implies sending PointCloud, so the conversion uses the *original* camera intrinsics
+    # but applies them to the *grid cell centers* mapped back to the original image plane if necessary.
+    # The current implementation of depth_to_point_cloud for grid data assumes fx,fy,cx,cy are for the grid itself.
+    # Let's define intrinsics for the grid for this test, assuming cx,cy are grid centers.
+    mock_camera_intrinsics_grid = {
+        "fx": 16.0, "fy": 12.0, # Example: if each grid cell was 1 unit FoV
+        "cx": 7.5,  "cy": 5.5   # Center of 16x12 grid (0-indexed)
+    }
+    mock_grid_config = {"target_rows": 12, "target_cols": 16}
+
+    logger.info("\n--- Testing Grid Compressed Data --- ")
+    pc_grid = depth_to_point_cloud(mock_depth_grid, mock_camera_intrinsics_grid, 
+                                   is_grid_data=True, grid_config=mock_grid_config)
+    if pc_grid.size > 0:
+        logger.info(f"Grid point cloud generated: {pc_grid.shape[0]} points.")
+        logger.debug(f"Sample points (grid):\n{pc_grid[:3]}")
+        logger.debug(f"X range: {np.min(pc_grid[:,0]):.2f} to {np.max(pc_grid[:,0]):.2f}")
+        logger.debug(f"Y range: {np.min(pc_grid[:,1]):.2f} to {np.max(pc_grid[:,1]):.2f}")
+        logger.debug(f"Z range: {np.min(pc_grid[:,2]):.2f} to {np.max(pc_grid[:,2]):.2f}")
+    else:
+        logger.error("Grid point cloud generation FAILED.")
+
+    # --- Test Case 3: Empty depth data ---
+    logger.info("\n--- Testing Empty Depth Data --- ")
+    pc_empty = depth_to_point_cloud(np.array([]), mock_camera_intrinsics_full)
+    if pc_empty.size == 0:
+        logger.info("Empty depth data test PASSED (returned empty point cloud).")
+    else:
+        logger.error("Empty depth data test FAILED.")
+
+    # --- Test Case 4: Grid data with no valid points ---
+    logger.info("\n--- Testing Grid Data with No Valid Points --- ")
+    mock_depth_grid_invalid = np.zeros((12,16), dtype=np.float32) # All zero depth
+    pc_grid_invalid = depth_to_point_cloud(mock_depth_grid_invalid, mock_camera_intrinsics_grid, 
+                                           is_grid_data=True, grid_config=mock_grid_config)
+    if pc_grid_invalid.size == 0:
+        logger.info("Grid data with no valid points test PASSED.")
+    else:
+        logger.error("Grid data with no valid points test FAILED.")
+
+    # (Keep create_top_down_occupancy_grid and visualize_occupancy_grid if they are used by other parts or for testing)
+    # For example, to test occupancy grid generation:
+    # if pc_grid.size > 0:
+    #     logger.info("\n--- Testing Occupancy Grid Generation (from grid PC) --- ")
+    #     mock_grid_params_occ = {
+    #         "x_range": (-5, 5), "z_range": (0, 10), "resolution": 0.1,
+    #         "y_min": -1.0, "y_max": 1.0, "obstacle_threshold": 0.2
+    #     }
+    #     occupancy_map = create_top_down_occupancy_grid(pc_grid, mock_grid_params_occ)
+    #     logger.info(f"Occupancy grid generated with shape: {occupancy_map.shape}")
+    #     # visualize_occupancy_grid(occupancy_map) # If you want to see it (requires cv2 window)
+
+    logger.info("\nPoint_cloud.py tests finished.")
