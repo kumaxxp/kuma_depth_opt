@@ -193,7 +193,8 @@ async def get_pointcloud_data():
     
     if grid_compression_config.get("enabled", False):
         # Compress the relative depth map first
-        compressed_relative_grid = depth_processor_instance.compress_depth_to_grid(relative_depth_map)
+        # Pass the grid_compression_config to compress_depth_to_grid
+        compressed_relative_grid = depth_processor_instance.compress_depth_to_grid(relative_depth_map, grid_compression_config)
         if compressed_relative_grid is None:
             logger.warning("Grid compression failed.")
             return PointCloudResponse(
