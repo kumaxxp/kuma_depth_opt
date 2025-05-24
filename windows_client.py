@@ -19,6 +19,16 @@ if not logger.hasHandlers():
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
+def safe_json_parse(json_string: str) -> dict | None:
+    """Safely parses a JSON string, returning None on failure."""
+    if not json_string or not isinstance(json_string, str):
+        return None
+    try:
+        return json.loads(json_string)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSONDecodeError: {e} for string: '{json_string[:100]}...'") # Log part of the string
+        return None
+
 class DataReceiver:
     """Handles fetching point cloud data from the Linux server."""
     def __init__(self, server_url: str, endpoint: str = "/pointcloud", request_timeout_s: float = 5.0): # Added request_timeout_s
@@ -33,7 +43,11 @@ class DataReceiver:
         try:
             response = requests.get(self.url, timeout=self.request_timeout_s) # Use stored timeout
             response.raise_for_status()  # Raise an exception for HTTP errors
-            data = response.json()
+            # Use safe_json_parse instead of response.json()
+            data = safe_json_parse(response.text)
+            if data is None:
+                logger.error(f"Failed to parse JSON response from {self.url}. Response text: {response.text[:200]}...")
+                return None
             logger.debug(f"Successfully fetched data: {len(data.get('point_cloud', []))} points, timestamp: {data.get('timestamp_processing_end')}")
             return data
         except requests.exceptions.RequestException as e:

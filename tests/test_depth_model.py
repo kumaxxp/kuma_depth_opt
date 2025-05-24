@@ -1,6 +1,14 @@
 import pytest
-import numpy as np
-from depth_processor.depth_model import DepthProcessor, convert_to_absolute_depth, HAS_AXENGINE
+import sys
+from unittest.mock import MagicMock, patch # Add MagicMock and patch import
+import numpy as np # Ensure numpy is imported if used in mocks
+
+if not sys.platform.startswith('linux'):
+    pytestmark = pytest.mark.skip(reason="Linux-specific tests for depth_model.py as it interacts with NPU-related code.")
+
+# Make sure to import the module itself for easier patching if not already done
+from depth_processor import depth_model as depth_model_module
+from depth_processor.depth_model import DepthProcessor, convert_to_absolute_depth # Ensure DepthProcessor and convert_to_absolute_depth are imported
 
 # To run tests, navigate to the root of your project (c:\work\kuma_depth_opt)
 # and run: pytest
@@ -245,11 +253,10 @@ def test_convert_to_absolute_depth_extreme_config_values(dummy_config_linux, is_
 
 def test_depth_processor_predict_model_available_mocked(dummy_config_linux, monkeypatch):
     """Test predict method when a model is available (mocked)."""
-    
-    # --- Mocking HAS_AXENGINE and axengine.InferenceSession ---
-    monkeypatch.setattr("depth_processor.depth_model.HAS_AXENGINE", True)
-    # --- ADDED: Mock os.path.exists to prevent early exit ---
-    monkeypatch.setattr("depth_processor.depth_model.os.path.exists", lambda path: True)
+
+    # --- Mocking HAS_AXENGINE and os.path.exists ---
+    monkeypatch.setattr(depth_model_module, "HAS_AXENGINE", True)
+    monkeypatch.setattr(depth_model_module.os.path, "exists", lambda path: True)
 
 
     class MockModelInput:
@@ -262,32 +269,34 @@ def test_depth_processor_predict_model_available_mocked(dummy_config_linux, monk
             self.inputs = [MockModelInput("input_tensor_name")]
             self.run_called = False
             self.run_input_data = None
+            self.get_inputs_called = False
+
 
         def get_inputs(self):
+            self.get_inputs_called = True
             return self.inputs
 
         def run(self, output_names, input_feed):
             self.run_called = True
             self.run_input_data = input_feed
-            # Simulate a model output: (1, H, W, 1)
-            # Use dimensions from config for consistency
             h = dummy_config_linux["depth_model_parameters"]["input_height"]
             w = dummy_config_linux["depth_model_parameters"]["input_width"]
-            # Create a dummy output similar to what the model might produce
-            # (e.g., values between 0 and 1, or some other range)
-            # For this test, a simple gradient like the dummy data is fine.
             dummy_output = np.zeros((1, h, w, 1), dtype=np.float32)
             for y_idx in range(h):
-                value = 0.1 + 0.8 * (y_idx / h) # Normalized 0.1 to 0.9
+                value = 0.1 + 0.8 * (y_idx / h)
                 dummy_output[0, y_idx, :, 0] = value
             return [dummy_output]
 
     mock_session_instance = MockInferenceSession(dummy_config_linux["depth_model"]["model_path"])
-    
-    # Monkeypatch the InferenceSession constructor
-    monkeypatch.setattr("depth_processor.depth_model.axe.InferenceSession", lambda path: mock_session_instance)
 
-    # --- Test ---
+    # Create a mock for the 'axe' module/object within depth_model_module
+    mock_axe_object = MagicMock()
+    # Configure its InferenceSession attribute to be a factory that returns our mock_session_instance
+    mock_axe_object.InferenceSession = lambda model_path_arg: mock_session_instance
+    
+    # Patch the 'axe' global variable in the depth_model_module directly
+    monkeypatch.setitem(depth_model_module.__dict__, 'axe', mock_axe_object)
+
     processor = DepthProcessor(dummy_config_linux)
     assert processor.is_available() # Model should now be considered available
     assert processor.model == mock_session_instance
