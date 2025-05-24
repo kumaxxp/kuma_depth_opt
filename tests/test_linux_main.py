@@ -65,8 +65,8 @@ def test_get_pointcloud_system_not_initialized(client):
     # One way is to patch the globals directly in the linux_main module.
     
     # Test with all components mocked to None (simulating startup failure)
-    with patch("linux_main.config", None), \\
-         patch("linux_main.depth_processor_instance", None), \\
+    with patch("linux_main.config", None), \
+         patch("linux_main.depth_processor_instance", None), \
          patch("linux_main.camera_capture", None):
         
         response = client.get("/pointcloud")
@@ -81,9 +81,9 @@ def test_get_pointcloud_success(client, mock_config_data):
     mock_depth_map = np.random.rand(mock_config_data["depth_model_parameters"]["input_height"], mock_config_data["depth_model_parameters"]["input_width"]).astype(np.float32)
     mock_point_cloud = [[float(i), float(i), float(i)] for i in range(5)] # Simple mock
 
-    with patch("linux_main.load_config", return_value=mock_config_data), \\
-         patch("linux_main.CamInput") as MockCamInput, \\
-         patch("linux_main.initialize_depth_model") as MockInitializeDepthModel, \\
+    with patch("linux_main.load_config", return_value=mock_config_data), \
+         patch("linux_main.CamInput") as MockCamInput, \
+         patch("linux_main.initialize_depth_model") as MockInitializeDepthModel, \
          patch("linux_main.depth_to_point_cloud", return_value=np.array(mock_point_cloud)) as MockDepthToPointCloud:
 
         # Configure CamInput mock
@@ -125,8 +125,8 @@ def test_get_pointcloud_success(client, mock_config_data):
             # We will patch the globals that are set by startup_event.
             
             # Patching globals directly within linux_main for the scope of this test
-            with patch("linux_main.config", mock_config_data), \\
-                 patch("linux_main.camera_capture", mock_cam_instance), \\
+            with patch("linux_main.config", mock_config_data), \
+                 patch("linux_main.camera_capture", mock_cam_instance), \
                  patch("linux_main.depth_processor_instance", mock_depth_processor):
 
                 response = client.get("/pointcloud")
