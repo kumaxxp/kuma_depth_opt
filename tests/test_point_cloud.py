@@ -135,3 +135,91 @@ def test_create_top_down_occupancy_grid_points_outside_y_filter(sample_grid_para
     grid = create_top_down_occupancy_grid(points, sample_grid_params)
     assert grid.shape == (6,4)
     assert np.all(grid == 0) # All cells should be unknown as points are filtered out
+
+def test_depth_to_point_cloud_grid_data_missing_original_dims(sample_depth_data, sample_camera_intrinsics, sample_grid_config):
+    """Test grid data PC conversion when original_image_dims is missing."""
+    points = depth_to_point_cloud(
+        sample_depth_data,
+        camera_intrinsics=sample_camera_intrinsics,
+        is_grid_data=True,
+        grid_config=sample_grid_config,
+        original_image_dims=None # Explicitly set to None
+    )
+    # Expect empty point cloud as original_image_dims is required for grid projection
+    assert points.shape == (0, 3)
+
+def test_depth_to_point_cloud_grid_data_missing_grid_config(sample_depth_data, sample_camera_intrinsics, sample_original_image_dims):
+    """Test grid data PC conversion when grid_config is missing."""
+    points = depth_to_point_cloud(
+        sample_depth_data,
+        camera_intrinsics=sample_camera_intrinsics,
+        is_grid_data=True,
+        grid_config=None, # Explicitly set to None
+        original_image_dims=sample_original_image_dims
+    )
+    assert points.shape == (0, 3)
+
+def test_depth_to_point_cloud_grid_data_mismatched_grid_config(sample_depth_data, sample_camera_intrinsics, sample_original_image_dims):
+    """Test grid data PC with grid_config not matching depth_data shape (should use depth_data shape)."""
+    mismatched_grid_config = {"target_rows": 2, "target_cols": 2} # Different from sample_depth_data (3x3)
+    points = depth_to_point_cloud(
+        sample_depth_data, # This is 3x3
+        camera_intrinsics=sample_camera_intrinsics,
+        is_grid_data=True,
+        grid_config=mismatched_grid_config, # Config says 2x2
+        original_image_dims=sample_original_image_dims
+    )
+    # The function logs a warning but should proceed using actual depth_data.shape (3x3)
+    # So, the number of points should still be based on the 3x3 sample_depth_data
+    assert points.shape[0] == np.count_nonzero(sample_depth_data > 0.01)
+    assert points.shape[1] == 3
+
+
+def test_create_top_down_occupancy_grid_points_outside_grid_bounds(sample_grid_params):
+    """Test with points that are outside the x_range and z_range of the grid."""
+    points_outside = np.array([
+        [10.0, 0.1, 1.0],  # X > x_max (1.0)
+        [-10.0, 0.1, 1.0], # X < x_min (-1.0)
+        [0.0, 0.1, 10.0],  # Z > z_max (3.0)
+        [0.0, 0.1, -10.0]  # Z < z_min (0.0)
+    ], dtype=np.float32)
+    grid = create_top_down_occupancy_grid(points_outside, sample_grid_params)
+    assert grid.shape == (6, 4)
+    assert np.all(grid == 0) # All cells should be unknown
+
+def test_create_top_down_occupancy_grid_specific_obstacle_and_free(sample_grid_params):
+    """Test specific cells becoming obstacle or free based on y-values."""
+    points = np.array([
+        # Cell (z=1, x=2) -> grid_z=int((1.0-0)/0.5)=2, grid_x=int((0.0-(-1.0))/0.5)=2
+        [0.0, 0.05, 1.0], # Point 1: Y=0.05 (free_space_max_height=0.08) -> Free (2)
+        [0.0, 0.15, 1.0], # Point 2: Y=0.15 (obstacle_height_threshold=0.1) -> Obstacle (1)
+    ], dtype=np.float32)
+    
+    # Modify grid_params for this specific test if needed, or use existing ones.
+    # sample_grid_params: obstacle_height_threshold = 0.1, free_space_max_height = 0.08
+
+    grid = create_top_down_occupancy_grid(points, sample_grid_params)
+    
+    # Cell corresponding to X=0.0, Z=1.0
+    # grid_x = int((0.0 - (-1.0)) / 0.5) = int(1.0 / 0.5) = 2
+    # grid_z = int((1.0 - 0.0) / 0.5) = int(1.0 / 0.5) = 2
+    # Since Point 2 (Y=0.15) is an obstacle and Point 1 (Y=0.05) is free,
+    # the cell should be marked as an obstacle because min_height_grid will be 0.05,
+    # but the logic is: free if min_height <= free_thresh, obstacle if min_height > obstacle_thresh.
+    # If min_height is 0.05, it is <= free_thresh (0.08), so it should be FREE.
+    # Let's re-evaluate the logic in create_top_down_occupancy_grid for this case.
+    # Current logic: min_height_grid stores the minimum y. 
+    # If min_y <= free_space_max_height -> free (2)
+    # If min_y > obstacle_height_threshold -> obstacle (1)
+    # If a cell has points that are both very low (free) and higher (obstacle), 
+    # min_height will be low, making it FREE. This is generally desired.
+    assert grid[2, 2] == 2 # Expected: Free, because of the point at Y=0.05
+
+    # Test a cell that should only be an obstacle
+    points_obstacle_only = np.array([
+        [0.7, 0.2, 0.2], # X=0.7, Z=0.2. Y=0.2 > obstacle_thresh (0.1)
+                         # grid_x = int((0.7 - (-1.0)) / 0.5) = int(1.7/0.5) = 3
+                         # grid_z = int((0.2 - 0.0) / 0.5) = int(0.2/0.5) = 0
+    ], dtype=np.float32)
+    grid_obstacle = create_top_down_occupancy_grid(points_obstacle_only, sample_grid_params)
+    assert grid_obstacle[0, 3] == 1 # Expected: Obstacle
