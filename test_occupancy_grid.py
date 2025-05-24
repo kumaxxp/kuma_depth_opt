@@ -33,13 +33,14 @@ def test_occupancy_grid_and_projection():
     depth_absolute = convert_to_absolute_depth(depth_data, dummy_config, is_compressed_grid=False)
     
     # ポイントクラウドを生成
+    camera_intrinsics_dict = {"fx": fx, "fy": fy, "cx": cx, "cy": cy}
+    grid_rows, grid_cols = depth_absolute.shape[:2]
     points = depth_to_point_cloud(
         depth_absolute,
-        fx=fx,
-        fy=fy,
-        cx=cx,
-        cy=cy,
-        is_grid_data=True
+        camera_intrinsics=camera_intrinsics_dict,
+        is_grid_data=True, # Ensure this is True as per previous context
+        grid_config={"target_rows": grid_rows, "target_cols": grid_cols},
+        original_image_dims=(dummy_config["depth_model_parameters"]["input_height"], dummy_config["depth_model_parameters"]["input_width"])
     )
     
     # トップダウン投影のパラメータ
