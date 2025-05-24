@@ -1,6 +1,10 @@
 {
+  "server_connection": {
+    "linux_server_ip": "192.168.1.30",
+    "linux_server_port": 8000
+  },
   "server": {
-    "host": "192.168.1.100", 
+    "host": "192.168.1.30", 
     "port": 8000,
     "endpoint": "/pointcloud"
   },

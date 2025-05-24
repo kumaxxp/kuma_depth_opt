@@ -21,16 +21,17 @@ if not logger.hasHandlers():
 
 class DataReceiver:
     """Handles fetching point cloud data from the Linux server."""
-    def __init__(self, server_url: str, endpoint: str = "/pointcloud"):
+    def __init__(self, server_url: str, endpoint: str = "/pointcloud", request_timeout_s: float = 5.0): # Added request_timeout_s
         self.base_url = server_url.rstrip('/')
         self.endpoint = endpoint
         self.url = f"{self.base_url}{self.endpoint}"
-        logger.info(f"DataReceiver initialized. Target URL: {self.url}")
+        self.request_timeout_s = request_timeout_s # Store timeout
+        logger.info(f"DataReceiver initialized. Target URL: {self.url}, Timeout: {self.request_timeout_s}s")
 
     def fetch_data(self) -> dict | None:
         """Fetches point cloud data from the server."""
         try:
-            response = requests.get(self.url, timeout=5) # 5 second timeout
+            response = requests.get(self.url, timeout=self.request_timeout_s) # Use stored timeout
             response.raise_for_status()  # Raise an exception for HTTP errors
             data = response.json()
             logger.debug(f"Successfully fetched data: {len(data.get('point_cloud', []))} points, timestamp: {data.get('timestamp_processing_end')}")
@@ -44,14 +45,18 @@ class DataReceiver:
 
 class PCVisualizer:
     """Visualizes the point cloud data in a real-time 3D plot."""
-    def __init__(self, fig, ax, config: dict):
+    def __init__(self, fig, ax, vis_config: dict): # Changed config to vis_config for clarity
         self.fig = fig
         self.ax = ax
         self.scatter = None
-        self.config = config.get("visualization", {})
-        self.plot_limits = self.config.get("plot_limits", {"x": [-2, 2], "y": [-2, 2], "z": [0, 5]})
-        self.point_size = self.config.get("point_size", 1)
-        self.animation_interval = self.config.get("animation_interval_ms", 200) # Default to 200ms (5 FPS)
+        # Use direct keys from vis_config as per new config_windows.json structure
+        self.plot_limits = {
+            "x": vis_config.get("plot_limit_x_m", [-2, 2]),
+            "y": vis_config.get("plot_limit_y_m", [-2, 2]),
+            "z": vis_config.get("plot_limit_z_m", [0, 5])
+        }
+        self.point_size = vis_config.get("point_size", 1)
+        # animation_interval will be handled in main based on client_config
 
         self.ax.set_xlabel("X (m)")
         self.ax.set_ylabel("Y (m)")
@@ -64,7 +69,7 @@ class PCVisualizer:
         # self.ax.invert_yaxis()
         # Invert Z-axis if depth is positive away from camera but you want Z up (also optional)
         # self.ax.invert_zaxis()
-        self.ax.view_init(elev=self.config.get("view_elevation", 20), azim=self.config.get("view_azimuth", -60))
+        self.ax.view_init(elev=vis_config.get("view_elevation", 20), azim=vis_config.get("view_azimuth", -60))
 
         # For FPS calculation
         self.frame_count = 0
@@ -76,10 +81,11 @@ class PCVisualizer:
 
         logger.info("PCVisualizer initialized.")
 
-    def update_plot(self, frame_data_tuple):
+    def update_plot(self, frame, data_receiver: DataReceiver): # MODIFIED SIGNATURE
         """Updates the 3D scatter plot with new point cloud data."""
-        # frame_data_tuple is (self, data_receiver) because of how FuncAnimation works with methods
-        _, data_receiver = frame_data_tuple 
+        # frame is the frame number/data from FuncAnimation, can be ignored if not used
+        # data_receiver is the DataReceiver instance passed via fargs
+        
         data = data_receiver.fetch_data()
 
         if data and 'point_cloud' in data and data['point_cloud']:
@@ -144,23 +150,26 @@ def main():
         logger.error(f"Failed to load configuration from {config_path}. Exiting.")
         return
 
-    server_config = config.get("server_connection", {})
+    server_config = config.get("server_connection", {}) # Still using server_connection for base URL
+    client_config = config.get("client", {})
+    vis_config = config.get("visualization", {})
+
     server_ip = server_config.get("linux_server_ip", "localhost")
     server_port = server_config.get("linux_server_port", 8000)
     server_url = f"http://{server_ip}:{server_port}"
-
-    data_receiver = DataReceiver(server_url=server_url, endpoint="/pointcloud")
     
-    fig = plt.figure(figsize=config.get("visualization", {}).get("figure_size", (10, 8)))
+    request_timeout = client_config.get("request_timeout_s", 5.0)
+    polling_interval = client_config.get("polling_interval_ms", 200)
+
+    data_receiver = DataReceiver(server_url=server_url, endpoint="/pointcloud", request_timeout_s=request_timeout)
+    
+    fig = plt.figure(figsize=vis_config.get("figure_size", (10, 8))) # figure_size might not be in new config, added default
     ax = fig.add_subplot(111, projection='3d')
     
-    visualizer = PCVisualizer(fig, ax, config)
+    visualizer = PCVisualizer(fig, ax, vis_config) # Pass only visualization part of config
 
-    # Pass a tuple (visualizer, data_receiver) to update_plot
-    # FuncAnimation will call visualizer.update_plot((visualizer, data_receiver))
-    # The first argument to update_plot will be this tuple.
-    ani = FuncAnimation(fig, visualizer.update_plot, fargs=((visualizer, data_receiver),), 
-                        interval=visualizer.animation_interval, blit=False)
+    ani = FuncAnimation(fig, visualizer.update_plot, fargs=(data_receiver,), 
+                        interval=polling_interval, blit=False, cache_frame_data=False)
     
     plt.show()
     logger.info("Windows client application stopped.")
