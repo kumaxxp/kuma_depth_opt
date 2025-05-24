@@ -137,8 +137,8 @@ class DepthProcessor:
         """深度推定を実行"""
         if not self.is_available():
             logger.info("Using dummy depth data (model not available or not initialized correctly)")
-            return self._generate_dummy_depth(size=(self.model_input_height, self.model_inputWidth)), 0.01
-            
+            return self._generate_dummy_depth(size=(self.model_input_height, self.model_input_width)), 0.01
+        
         start_time = time.time()
         
         try:
@@ -147,12 +147,12 @@ class DepthProcessor:
             
             if self.input_name is None: 
                 logger.error("Model input name is not set. Cannot run inference.")
-                return self._generate_dummy_depth(size=(self.model_input_height, self.model_inputWidth)), time.time() - start_time
+                return self._generate_dummy_depth(size=(self.model_input_height, self.model_input_width)), time.time() - start_time
 
             outputs = self.model.run(None, {self.input_name: input_tensor})
             if outputs is None or len(outputs) == 0:
                 logger.error("Inference returned empty outputs")
-                return self._generate_dummy_depth(size=(self.model_input_height, self.model_inputWidth)), time.time() - start_time
+                return self._generate_dummy_depth(size=(self.model_input_height, self.model_input_width)), time.time() - start_time
                 
             depth = outputs[0]
             logger.debug(f"Raw depth output shape: {depth.shape}, size: {depth.size}")
@@ -182,13 +182,13 @@ class DepthProcessor:
                 
             except Exception as e:
                 logger.error(f"Error in depth post-processing (reshape/normalize): {e}")
-                return self._generate_dummy_depth(size=(self.model_input_height, self.model_inputWidth)), time.time() - start_time
+                return self._generate_dummy_depth(size=(self.model_input_height, self.model_input_width)), time.time() - start_time
             
         except Exception as e:
             logger.error(f"Inference error: {e}")
             import traceback
             logger.error(traceback.format_exc())
-            return self._generate_dummy_depth(size=(self.model_input_height, self.model_inputWidth)), time.time() - start_time
+            return self._generate_dummy_depth(size=(self.model_input_height, self.model_input_width)), time.time() - start_time
     
     def _generate_dummy_depth(self, size=(256, 384)): # size is (height, width)
         """テスト用のダミー深度マップを生成"""
