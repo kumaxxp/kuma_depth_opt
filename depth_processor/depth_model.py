@@ -232,8 +232,27 @@ class DepthProcessor:
             return None
 
         original_height, original_width = depth_map_abs.shape[:2]
+        
+        if original_height == 0 or original_width == 0:
+            logger.error(f"Input depth_map_abs has zero dimension: {depth_map_abs.shape}. Cannot perform grid compression.")
+            return None
+
         cell_height = original_height // target_rows
         cell_width = original_width // target_cols
+
+        if cell_height == 0 or cell_width == 0:
+            logger.error(
+                f"Calculated cell height or width is zero. "
+                f"Original dims: ({original_height}x{original_width}), "
+                f"Target grid: ({target_rows}x{target_cols}). "
+                f"Cannot perform grid compression."
+            )
+            # グリッド圧縮が不可能な場合、入力と同じ形状でデフォルト値を返すか、Noneを返す
+            # ここでは、入力と同じ形状で0を詰めたものを返す例（後続処理で無効データとして扱われることを期待）
+            # return np.zeros_like(depth_map_abs) 
+            # または、より明確にエラーを示すために None を返す
+            return None
+
 
         # Initialize compressed grid
         compressed_grid = np.zeros((target_rows, target_cols), dtype=np.float32)
@@ -246,18 +265,38 @@ class DepthProcessor:
                     c * cell_width : (c + 1) * cell_width,
                 ]
 
-                if method == "mean":
-                    # Use mean of the ROI as the grid cell value
-                    compressed_grid[r, c] = np.mean(roi)
+                if roi.size == 0:
+                    logger.warning(f"ROI at grid cell ({r},{c}) is empty. Setting to 0.0.")
+                    compressed_grid[r, c] = 0.0
+                elif method == "mean":
+                    value = np.mean(roi)
+                    if np.isnan(value):
+                        logger.warning(f"Mean of ROI at grid cell ({r},{c}) resulted in NaN. Setting to 0.0.")
+                        compressed_grid[r, c] = 0.0
+                    else:
+                        compressed_grid[r, c] = value
                 elif method == "max":
-                    # Use max of the ROI as the grid cell value
-                    compressed_grid[r, c] = np.max(roi)
+                    value = np.max(roi) # np.max of empty array raises ValueError
+                    if np.isnan(value): # Should not happen if roi is not empty and no nans
+                        logger.warning(f"Max of ROI at grid cell ({r},{c}) resulted in NaN. Setting to 0.0.")
+                        compressed_grid[r, c] = 0.0
+                    else:
+                        compressed_grid[r, c] = value
                 elif method == "min":
-                    # Use min of the ROI as the grid cell value
-                    compressed_grid[r, c] = np.min(roi)
+                    value = np.min(roi) # np.min of empty array raises ValueError
+                    if np.isnan(value): # Should not happen if roi is not empty and no nans
+                        logger.warning(f"Min of ROI at grid cell ({r},{c}) resulted in NaN. Setting to 0.0.")
+                        compressed_grid[r, c] = 0.0
+                    else:
+                        compressed_grid[r, c] = value
                 else:
                     logger.warning(f"Unknown compression method: {method}. Defaulting to mean.")
-                    compressed_grid[r, c] = np.mean(roi)
+                    value = np.mean(roi) # Fallback to mean
+                    if np.isnan(value):
+                        logger.warning(f"Mean (fallback) of ROI at grid cell ({r},{c}) resulted in NaN. Setting to 0.0.")
+                        compressed_grid[r, c] = 0.0
+                    else:
+                        compressed_grid[r, c] = value
 
         return compressed_grid
 
