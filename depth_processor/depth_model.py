@@ -137,7 +137,7 @@ class DepthProcessor:
         """深度推定を実行"""
         if not self.is_available():
             logger.info("Using dummy depth data (model not available or not initialized correctly)")
-            return self._generate_dummy_depth(size=(self.model_input_height, self.model_input_width)), 0.01
+            return self._generate_dummy_depth(size=(self.model_input_height, self.model_inputWidth)), 0.01
             
         start_time = time.time()
         
@@ -147,7 +147,7 @@ class DepthProcessor:
             
             if self.input_name is None: 
                 logger.error("Model input name is not set. Cannot run inference.")
-                return self._generate_dummy_depth(size=(self.model_input_height, self.model_input_width)), time.time() - start_time
+                return self._generate_dummy_depth(size=(self.model_input_height, self.model_inputWidth)), time.time() - start_time
 
             outputs = self.model.run(None, {self.input_name: input_tensor})
             if outputs is None or len(outputs) == 0:
@@ -182,13 +182,13 @@ class DepthProcessor:
                 
             except Exception as e:
                 logger.error(f"Error in depth post-processing (reshape/normalize): {e}")
-                return self._generate_dummy_depth(size=(self.model_input_height, self.model_input_width)), time.time() - start_time
+                return self._generate_dummy_depth(size=(self.model_input_height, self.model_inputWidth)), time.time() - start_time
             
         except Exception as e:
             logger.error(f"Inference error: {e}")
             import traceback
             logger.error(traceback.format_exc())
-            return self._generate_dummy_depth(size=(self.model_input_height, self.model_input_width)), time.time() - start_time
+            return self._generate_dummy_depth(size=(self.model_input_height, self.model_inputWidth)), time.time() - start_time
     
     def _generate_dummy_depth(self, size=(256, 384)): # size is (height, width)
         """テスト用のダミー深度マップを生成"""
@@ -198,11 +198,25 @@ class DepthProcessor:
         for y_idx in range(output_h):
             value = 0.1 + 0.8 * (y_idx / output_h)
             dummy_depth[0, y_idx, :, 0] = value
-            
-        logger.debug(f"Generated dummy depth map with shape: {dummy_depth.shape}")
         return dummy_depth
-    
-    def is_available(self):
+
+    def release(self):
+        """モデルリソースを解放"""
+        if hasattr(self, 'model') and self.model is not None:
+            logger.info("Releasing depth model resources...")
+            # axengine.InferenceSession に明示的な close や release メソッドがあるか不明なため、
+            # del を試みるか、何もしない (ガベージコレクションに任せる)
+            # ここでは del を試みます。axengine のドキュメントに従って調整が必要な場合があります。
+            try:
+                del self.model
+                self.model = None
+                logger.info("Depth model resources released (deleted).")
+            except Exception as e:
+                logger.error(f"Error releasing depth model: {e}")
+        else:
+            logger.info("No depth model to release or already released.")
+
+    def is_available(self) -> bool:
         """モデルが利用可能かどうかを返す"""
         return self.model is not None and self.input_name is not None
 

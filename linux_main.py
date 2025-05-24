@@ -137,6 +137,8 @@ async def shutdown_event():
     logger.info("Linux module shutting down...")
     if camera_capture:
         camera_capture.release()
+    if depth_processor_instance:
+        depth_processor_instance.release() # depth_processor_instance の解放を追加
     logger.info("Shutdown complete.")
 
 # --- FastAPI Endpoint ---
