@@ -12,10 +12,25 @@ def test_occupancy_grid_and_projection():
     
     # カメラパラメータ
     fx, fy, cx, cy = 1.0, 1.0, 1.0, 1.0
-    scaling_factor = 1.0
+    # scaling_factor = 1.0 # This is now part of dummy_config
     
+    # Create a dummy config for this test
+    dummy_config = {
+        "depth_processing": {
+            "scaling_factor": 1.0, # Keep the original scaling_factor for this test logic
+            "depth_scale": 1.0,
+            "min_depth_m": 0.1,
+            "max_depth_m": 5.0 # Example, adjust as needed for the test's logic
+        },
+        "depth_model_parameters": { # Needed for fallback shape if input is empty
+            "input_height": 3,
+            "input_width": 3
+        }
+        # Add other necessary keys if convert_to_absolute_depth or its callees expect them
+    }
+
     # 絶対深度に変換
-    depth_absolute = convert_to_absolute_depth(depth_data, scaling_factor)
+    depth_absolute = convert_to_absolute_depth(depth_data, dummy_config, is_compressed_grid=False)
     
     # ポイントクラウドを生成
     points = depth_to_point_cloud(

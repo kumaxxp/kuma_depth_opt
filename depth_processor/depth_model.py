@@ -402,10 +402,14 @@ def convert_to_absolute_depth(depth_map, config: dict, is_compressed_grid: bool)
             final_scaling_factor = scaling_factor * depth_scale 
         
         absolute_depth[valid_mask] = 0.5 + normalized_diff[valid_mask] * final_scaling_factor
-        absolute_depth = np.clip(absolute_depth, 0.1, 50.0) # Clamp to 0.1m to 50m
+        
+        # Use min_depth_m and max_depth_m from config for clipping
+        min_clip = depth_processing_config.get("min_depth_m", 0.1)
+        max_clip = depth_processing_config.get("max_depth_m", 50.0)
+        absolute_depth = np.clip(absolute_depth, min_clip, max_clip)
 
         # Log final stats
-        final_valid_mask_for_stats = (absolute_depth >= 0.1) & (absolute_depth <= 50.0)
+        final_valid_mask_for_stats = (absolute_depth >= min_clip) & (absolute_depth <= max_clip)
         if np.any(final_valid_mask_for_stats): # Check if any values are in the valid range
             valid_abs_depths = absolute_depth[final_valid_mask_for_stats]
             if valid_abs_depths.size > 0: # Ensure array is not empty

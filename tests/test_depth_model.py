@@ -124,7 +124,7 @@ def test_convert_to_absolute_depth_normal_case(dummy_config_linux, is_compressed
     # A more specific check based on the transformation:
     # Values are scaled from (effective_far, effective_near) to (0.5, 0.5 + scaling_factor)
     # then clipped. For input 0.1 to 0.9, and typical scaling, most values should be > 0.5.
-    min_expected_val = 0.1 # from final clipping
+    min_expected_val = config["depth_processing"].get("min_depth_m", 0.1) # from final clipping
     max_expected_val = config["depth_processing"].get("max_depth_m", 50.0) # from final clipping
     assert np.all(absolute_depth >= min_expected_val)
     assert np.all(absolute_depth <= max_expected_val) 
