@@ -40,9 +40,12 @@ class DepthProcessor:
             config: 設定辞書 (config_linux.json の内容)
         """
         self.config = config
-        self.model_path = self.config.get("depth_anything_model_path")
+        # Use the correct key from config_linux.json: "depth_model" -> "model_path"
+        depth_model_config_main = self.config.get("depth_model", {})
+        self.model_path = depth_model_config_main.get("model_path") # CORRECTED KEY
+
         if not self.model_path:
-            logger.error("depth_anything_model_path is not defined in the configuration.")
+            logger.error("'model_path' not defined in the 'depth_model' section of the configuration.")
             # Consider raising an error or using a hardcoded default if critical
             # raise ValueError("Model path not configured")
 
@@ -149,7 +152,7 @@ class DepthProcessor:
             outputs = self.model.run(None, {self.input_name: input_tensor})
             if outputs is None or len(outputs) == 0:
                 logger.error("Inference returned empty outputs")
-                return self._generate_dummy_depth(size=(self.model_input_height, self.model_input_width)), time.time() - start_time
+                return self._generate_dummy_depth(size=(self.model_input_height, self.model_inputWidth)), time.time() - start_time
                 
             depth = outputs[0]
             logger.debug(f"Raw depth output shape: {depth.shape}, size: {depth.size}")
@@ -203,71 +206,60 @@ class DepthProcessor:
         """モデルが利用可能かどうかを返す"""
         return self.model is not None and self.input_name is not None
 
-    def compress_depth_to_grid(self, depth_map):
+    def compress_depth_to_grid(self, depth_map_abs, grid_config: dict):
         """
-        深度マップを指定されたグリッドサイズに圧縮します。
-        OpenCVのresizeを利用して高速化。
-
+        絶対深度マップを指定されたグリッドサイズに圧縮します。
+        
         Args:
-            depth_map (numpy.ndarray): 入力深度マップ (1, H, W, 1) or (H,W)
-                                      H, W are model output dimensions.
-
+            depth_map_abs (numpy.ndarray): 絶対深度マップ (メートル単位)。
+            grid_config (dict): グリッド圧縮の設定。
+                                 'target_rows', 'target_cols', 'method' を含む。
+        
         Returns:
-            numpy.ndarray: 圧縮された深度グリッド (rows, cols)
+            numpy.ndarray: 圧縮されたグリッド深度データ。
+                           エラー時は None を返す。
         """
-        try:
-            if depth_map is None or depth_map.size == 0:
-                logger.warning("Cannot compress empty depth map.")
-                return None
-
-            grid_compressor_config = self.config.get("grid_compressor", {})
-            grid_rows = grid_compressor_config.get("target_rows")
-            grid_cols = grid_compressor_config.get("target_cols")
-            # aggregation_method = grid_compressor_config.get("aggregation_method", "average") # Future use
-
-            if not grid_rows or not grid_cols:
-                logger.error("target_rows or target_cols not defined in grid_compressor config.")
-                return None 
-            
-            # Reshape input depth_map to 2D (H, W)
-            if len(depth_map.shape) == 4:  # (1, H, W, 1)
-                depth_feature = depth_map.reshape(depth_map.shape[1:3])
-            elif len(depth_map.shape) == 2:  # (H, W)
-                depth_feature = depth_map
-            elif len(depth_map.shape) == 3 and depth_map.shape[2] == 1: # (H, W, 1)
-                depth_feature = depth_map.reshape(depth_map.shape[:2])
-            else:
-                logger.error(f"Unsupported depth_map shape for compression: {depth_map.shape}")
-                return None
-            
-            if grid_rows <= 0 or grid_cols <= 0:
-                logger.error(f"Invalid grid_size from config: {(grid_rows, grid_cols)}. Dimensions must be positive.")
-                return None
-
-            depth_feature = np.nan_to_num(depth_feature, nan=0.0, posinf=0.0, neginf=0.0)
-            value_mask = (depth_feature > 1e-5).astype(np.float32)
-            depth_for_sum = depth_feature * value_mask
-            
-            target_cv_size = (grid_cols, grid_rows) # cv2.resize dsize is (width, height)
-
-            sum_resized = cv2.resize(depth_for_sum, target_cv_size, interpolation=cv2.INTER_AREA)
-            count_resized = cv2.resize(value_mask, target_cv_size, interpolation=cv2.INTER_AREA)
-
-            compressed_grid = np.zeros((grid_rows, grid_cols), dtype=np.float32)
-            valid_counts_mask = count_resized > 1e-6
-            
-            # Avoid division by zero
-            # Ensure sum_resized and count_resized have compatible types for division if needed.
-            # Here, they are both float32 after resize if input was float.
-            compressed_grid[valid_counts_mask] = sum_resized[valid_counts_mask] / count_resized[valid_counts_mask]
-            
-            return compressed_grid
-
-        except Exception as e:
-            logger.error(f"Error in compress_depth_to_grid: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+        if depth_map_abs is None or depth_map_abs.size == 0:
+            logger.error("Input depth_map_abs is empty for grid compression.")
             return None
+
+        target_rows = grid_config.get("target_rows")
+        target_cols = grid_config.get("target_cols")
+        method = grid_config.get("method", "mean")
+
+        if not target_rows or not target_cols:
+            logger.error("target_rows or target_cols not defined in grid_compressor config.") # Corrected from grid_compressor to grid_config
+            return None
+
+        original_height, original_width = depth_map_abs.shape[:2]
+        cell_height = original_height // target_rows
+        cell_width = original_width // target_cols
+
+        # Initialize compressed grid
+        compressed_grid = np.zeros((target_rows, target_cols), dtype=np.float32)
+
+        for r in range(target_rows):
+            for c in range(target_cols):
+                # Define the region of interest in the original depth map
+                roi = depth_map_abs[
+                    r * cell_height : (r + 1) * cell_height,
+                    c * cell_width : (c + 1) * cell_width,
+                ]
+
+                if method == "mean":
+                    # Use mean of the ROI as the grid cell value
+                    compressed_grid[r, c] = np.mean(roi)
+                elif method == "max":
+                    # Use max of the ROI as the grid cell value
+                    compressed_grid[r, c] = np.max(roi)
+                elif method == "min":
+                    # Use min of the ROI as the grid cell value
+                    compressed_grid[r, c] = np.min(roi)
+                else:
+                    logger.warning(f"Unknown compression method: {method}. Defaulting to mean.")
+                    compressed_grid[r, c] = np.mean(roi)
+
+        return compressed_grid
 
 def initialize_depth_model(config: dict):
     """
