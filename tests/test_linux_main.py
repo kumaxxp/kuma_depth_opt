@@ -78,13 +78,29 @@ def test_get_pointcloud_system_not_initialized(client):
 
 def test_get_pointcloud_success(client, mock_config_data):
     mock_frame = np.random.randint(0, 256, (mock_config_data["camera"]["height"], mock_config_data["camera"]["width"], 3), dtype=np.uint8)
-    mock_depth_map = np.random.rand(mock_config_data["depth_model_parameters"]["input_height"], mock_config_data["depth_model_parameters"]["input_width"]).astype(np.float32)
-    mock_point_cloud = [[float(i), float(i), float(i)] for i in range(5)] # Simple mock
+    
+    # Raw output from predict is typically 4D
+    mock_raw_depth_output = np.random.rand(
+        1, 
+        mock_config_data["depth_model_parameters"]["input_height"], 
+        mock_config_data["depth_model_parameters"]["input_width"], 
+        1
+    ).astype(np.float32)
+    
+    # This mock_depth_map is used for assertions related to later stages (e.g., input to point_cloud conversion if convert_to_absolute_depth is also mocked)
+    mock_depth_map_for_conversion = np.random.rand(
+        mock_config_data["depth_model_parameters"]["input_height"], 
+        mock_config_data["depth_model_parameters"]["input_width"]
+    ).astype(np.float32)
+
+    mock_point_cloud_list = [[float(i), float(i), float(i)] for i in range(5)] # Simple mock
+    mock_point_cloud_array = np.array(mock_point_cloud_list)
 
     with patch("linux_main.load_config", return_value=mock_config_data), \
          patch("linux_main.CamInput") as MockCamInput, \
          patch("linux_main.initialize_depth_model") as MockInitializeDepthModel, \
-         patch("linux_main.depth_to_point_cloud", return_value=np.array(mock_point_cloud)) as MockDepthToPointCloud:
+         patch("linux_main.depth_to_point_cloud", return_value=mock_point_cloud_array) as MockDepthToPointCloud, \
+         patch("linux_main.convert_to_absolute_depth", return_value=mock_depth_map_for_conversion) as MockConvertToAbsoluteDepth:
 
         # Configure CamInput mock
         mock_cam_instance = MockCamInput.return_value
@@ -94,69 +110,69 @@ def test_get_pointcloud_success(client, mock_config_data):
 
         # Configure DepthProcessor mock (returned by initialize_depth_model)
         mock_depth_processor = MockInitializeDepthModel.return_value
-        mock_depth_processor.predict.return_value = mock_depth_map
-        mock_depth_processor.compress_depth_to_grid.return_value = mock_depth_map # Assuming no compression for simplicity or mock it properly if needed
+        # predict returns: relative_depth_map, processed_input_image (or None)
+        mock_depth_processor.predict.return_value = (mock_raw_depth_output, None) 
+        # compress_depth_to_grid's return value (if called)
+        mock_depth_processor.compress_depth_to_grid.return_value = mock_depth_map_for_conversion 
 
-        # Simulate app startup to initialize globals based on mocks
-        # This is a bit of a workaround. Ideally, TestClient would handle this,
-        # but our startup logic is complex.
-        with patch.dict(sys.modules):
-            if 'linux_main' in sys.modules:
-                del sys.modules['linux_main']
+
+        # Patching globals directly within linux_main for the scope of this test
+        # This ensures the endpoint uses our mocked instances.
+        with patch("linux_main.config", mock_config_data), \
+             patch("linux_main.camera_capture", mock_cam_instance), \
+             patch("linux_main.depth_processor_instance", mock_depth_processor):
+
+            response = client.get("/pointcloud")
+            assert response.status_code == 200
+            data = response.json()
+
+            assert data["error_message"] is None
+            assert data["point_cloud"] == mock_point_cloud_list
+            assert "processing_time_total" in data
+            assert data["processing_time_total"] > 0
+            assert "processing_time_depth" in data
+            assert "processing_time_compression" in data
+            assert "processing_time_pointcloud" in data
             
-            # Re-import after deleting to re-trigger startup logic with mocks
-            # This is still problematic as startup_event is FastAPI specific.
-            # A better approach would be to refactor linux_main.py to make
-            # initialization more testable (e.g., pass dependencies into functions).
-
-            # For now, let's try to manually set the globals that startup_event would set.
-            # This assumes that load_config is called within startup_event or before.
+            mock_cam_instance.get_frame.assert_called_once()
+            mock_depth_processor.predict.assert_called_once_with(mock_frame)
             
-            # Manually trigger the parts of startup_event relevant for this test
-            # This is still not ideal as we are replicating startup logic.
+            # Assert calls to convert_to_absolute_depth
+            # First call is with the squeezed raw output
+            squeezed_raw_output = np.squeeze(mock_raw_depth_output)
+            call_args_list = MockConvertToAbsoluteDepth.call_args_list
             
-            # Instead of re-importing, let's try to patch the globals directly
-            # after the client has been created, assuming TestClient(app) runs startup.
-            # The challenge is that startup_event in linux_main.py uses the *actual*
-            # functions, not the mocked ones, unless we can patch them *before*
-            # TestClient(app) is called.
+            # Check the first call to convert_to_absolute_depth
+            # (this creates current_depth_data)
+            assert len(call_args_list) > 0, "convert_to_absolute_depth was not called"
+            args, kwargs = call_args_list[0]
+            assert np.array_equal(args[0], squeezed_raw_output)
+            assert args[1] == mock_config_data
+            assert kwargs.get("is_compressed_grid") == False
 
-            # Let's assume the client fixture handles startup and our patches are applied.
-            # We will patch the globals that are set by startup_event.
-            
-            # Patching globals directly within linux_main for the scope of this test
-            with patch("linux_main.config", mock_config_data), \
-                 patch("linux_main.camera_capture", mock_cam_instance), \
-                 patch("linux_main.depth_processor_instance", mock_depth_processor):
-
-                response = client.get("/pointcloud")
-                assert response.status_code == 200
-                data = response.json()
-
-                assert data["error_message"] is None
-                assert data["point_cloud"] == mock_point_cloud
-                assert "processing_time_total" in data
-                assert data["processing_time_total"] > 0
-                assert "processing_time_depth" in data  # Corrected
-                assert "processing_time_compression" in data  # Added
-                assert "processing_time_pointcloud" in data  # Corrected
+            if mock_config_data.get("grid_compression", {}).get("enabled", False):
+                # If compression is enabled, convert_to_absolute_depth is called a second time
+                # with the output of compress_depth_to_grid.
+                assert len(call_args_list) > 1, "convert_to_absolute_depth not called for compressed grid"
+                args_comp, kwargs_comp = call_args_list[1]
+                assert np.array_equal(args_comp[0], mock_depth_map_for_conversion) # compress_depth_to_grid returns this
+                assert args_comp[1] == mock_config_data
+                assert kwargs_comp.get("is_compressed_grid") == True
                 
-                mock_cam_instance.get_frame.assert_called_once()
-                mock_depth_processor.predict.assert_called_once_with(mock_frame)
-                
-                # Check if compress_depth_to_grid was called based on config
-                if mock_config_data.get("grid_compression", {}).get("enabled", False):
-                    mock_depth_processor.compress_depth_to_grid.assert_called_once_with(mock_depth_map)
-                else:
-                    mock_depth_processor.compress_depth_to_grid.assert_not_called()
+                # compress_depth_to_grid is called with current_depth_data, which is the result of the first convert_to_absolute_depth call
+                mock_depth_processor.compress_depth_to_grid.assert_called_once_with(mock_depth_map_for_conversion) 
+            else:
+                mock_depth_processor.compress_depth_to_grid.assert_not_called()
+                assert len(call_args_list) == 1, "convert_to_absolute_depth called more than once when compression is off"
 
-                MockDepthToPointCloud.assert_called_once()
-                # The actual arguments to depth_to_point_cloud can be complex to assert fully
-                # due to potential transformations. Let's check the first arg (depth_map).
-                args, kwargs = MockDepthToPointCloud.call_args
-                assert np.array_equal(args[0], mock_depth_map)
-                assert args[1] == mock_config_data["point_cloud"]["camera_intrinsics"]
-                assert args[2] == (mock_config_data["camera"]["height"], mock_config_data["camera"]["width"])
+
+            MockDepthToPointCloud.assert_called_once()
+            args_pc, kwargs_pc = MockDepthToPointCloud.call_args
+            # The first argument to depth_to_point_cloud is depth_for_pointcloud_conversion
+            # which is the result of the last call to convert_to_absolute_depth (i.e., mock_depth_map_for_conversion)
+            assert np.array_equal(args_pc[0], mock_depth_map_for_conversion)
+            assert args_pc[1] == mock_config_data["point_cloud"]["camera_intrinsics"]
+            assert args_pc[2] == (mock_config_data["camera"]["height"], mock_config_data["camera"]["width"])
 
 
 # More tests will be added here.
