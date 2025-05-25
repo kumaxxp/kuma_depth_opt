@@ -1,0 +1,18 @@
+# 実機テスト用最小パッケージリスト (PyTorch不要)
+# Core dependencies
+fastapi>=0.68.0
+uvicorn>=0.15.0
+pydantic>=1.8.0
+
+# Image processing and computer vision
+opencv-python>=4.5.0
+numpy>=1.21.0
+
+# Optional visualization (matplotlib is used in visualization module)
+matplotlib>=3.3.0
+
+# NPU inference engine (通常は組み込みシステムにプリインストール)
+# axengine  # This is typically pre-installed on NPU-enabled devices
+
+# Development/testing (optional)
+pytest>=6.0.0

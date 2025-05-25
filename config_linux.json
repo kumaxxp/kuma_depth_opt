@@ -1,27 +1,29 @@
 {
+  "logging": {
+    "level": "INFO"
+  },
   "camera": {
     "device_id": 0,
-    "width": 640,
-    "height": 480,
-    "fps": 10
+    "width": 320,
+    "height": 240,
+    "fps": 5
   },
   "depth_model": {
-    "model_path": "/opt/m5stack/data/depth_anything/compiled.axmodel",
-    "model_type": "vitl",
-    "device": "cuda" 
+    "model_name": "MiDaS_small",
+    "device": "cpu"
   },
   "grid_compression": {
-    "enabled": true,
-    "target_rows": 8,
-    "target_cols": 6,
+    "enabled": false,
+    "target_rows": 6,
+    "target_cols": 8,
     "method": "mean"
   },
   "point_cloud": {
     "camera_intrinsics": {
-      "fx": 525.0, 
-      "fy": 525.0, 
-      "cx": 319.5, 
-      "cy": 239.5 
+      "fx": 262.5, 
+      "fy": 262.5, 
+      "cx": 160.0, 
+      "cy": 120.0 
     },
     "depth_scale": 1000.0 
   },
