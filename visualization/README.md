@@ -33,9 +33,12 @@ python coordinate_systems.py
 
 ### 4. テスト・検証ツール
 
-- **`test_visualization_system.py`** - システム全体の包括テスト
-- **`test_grid_compression.py`** - グリッド圧縮機能の詳細テスト
-- **`test_grid_compression_16x12.png`** / **`test_grid_compression_4x3.png`** - テスト結果図
+#### スクリプト
+- **`coordinate_systems.py`** - 統合可視化生成スクリプト（メイン）
+- **`test_camera_view_fixed.py`** - カメラ座標系単独テスト・検証ツール
+
+#### 生成されるテスト結果図
+- **`test_camera_coordinate_system_fixed.png`** - カメラ座標系テスト結果
 
 ## 座標系の重要なポイント
 
