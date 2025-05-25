@@ -13,6 +13,8 @@ from depth_processor import DepthProcessor, create_depth_visualization, create_d
 from depth_processor.visualization import create_default_depth_image
 # 天頂視点マップ用の関数をインポート
 from depth_processor import convert_to_absolute_depth, depth_to_point_cloud, create_top_down_occupancy_grid, visualize_occupancy_grid
+# 設定ファイル読み込み用
+from utils import load_config
 
 # FastAPI lifecycle management using asynccontextmanager
 @asynccontextmanager
@@ -54,7 +56,15 @@ if not cap.isOpened():
 else:
     print(f"Camera connected successfully: {int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}")
 
-depth_processor = DepthProcessor()
+# 設定ファイルを読み込み
+config = load_config("config_linux.json")
+if not config:
+    print("ERROR: Could not load config_linux.json")
+    import sys
+    sys.exit(1)
+
+# DepthProcessorを設定付きで初期化
+depth_processor = DepthProcessor(config)
 
 # Expand shared memory
 latest_depth_map = None
