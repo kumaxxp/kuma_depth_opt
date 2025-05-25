@@ -12,6 +12,9 @@
     "polling_interval_ms": 500, 
     "request_timeout_s": 10.0
   },
+  "logging": {
+    "level": "INFO"
+  },
   "visualization": {
     "plot_limit_x_m": [-2.0, 2.0],
     "plot_limit_y_m": [-2.0, 2.0],
