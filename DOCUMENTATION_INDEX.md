@@ -33,9 +33,21 @@
 
 - **[visualization/](visualization/)** - アルゴリズム理解のための可視化
   - `coordinate_systems.py` - 可視化生成スクリプト
-  - `comprehensive_visualization.png` - 統合アルゴリズム図
-  - 個別詳細図（カメラ座標系、深度変換、グリッド圧縮、トップダウン変換）
-  - カスタムパラメータ比較図
+  - `README.md` - 可視化システム使用ガイド
+  - **包括可視化**:
+    - `comprehensive_visualization.png` - 4パネル統合アルゴリズム図
+  - **個別詳細図**:
+    - `camera_coordinate_system.png` - カメラ座標系とピンホールモデル
+    - `depth_conversion_algorithm.png` - 深度変換アルゴリズム
+    - `grid_compression_mapping.png` - グリッド圧縮マッピング
+    - `topdown_transformation.png` - トップダウン変換
+  - **カスタムパラメータ比較図**:
+    - `custom_vis_s5.0_g4x3_r0.5_h0.2.png` - 低解像度設定
+    - `custom_vis_s10.0_g8x6_r0.3_h0.15.png` - 中解像度設定
+    - `custom_vis_s15.0_g16x12_r0.25_h0.15.png` - 高解像度設定
+  - **テスト・検証ツール**:
+    - `test_visualization_system.py` - システム包括テスト
+    - `test_grid_compression.py` - グリッド圧縮詳細テスト
 
 ### 4. ソースコード構成
 

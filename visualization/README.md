@@ -27,8 +27,15 @@ python coordinate_systems.py
 
 ### 3. パラメータ比較図
 
-- **`custom_vis_s5.0_g4x3_r0.5_h0.2.png`** - 低解像度設定での動作
-- **`custom_vis_s15.0_g16x12_r0.25_h0.15.png`** - 高解像度設定での動作
+- **`custom_vis_s5.0_g4x3_r0.5_h0.2.png`** - 低解像度設定（4x3グリッド、0.5m解像度）
+- **`custom_vis_s10.0_g8x6_r0.3_h0.15.png`** - 中解像度設定（8x6グリッド、0.3m解像度）
+- **`custom_vis_s15.0_g16x12_r0.25_h0.15.png`** - 高解像度設定（16x12グリッド、0.25m解像度）
+
+### 4. テスト・検証ツール
+
+- **`test_visualization_system.py`** - システム全体の包括テスト
+- **`test_grid_compression.py`** - グリッド圧縮機能の詳細テスト
+- **`test_grid_compression_16x12.png`** / **`test_grid_compression_4x3.png`** - テスト結果図
 
 ## 座標系の重要なポイント
 

@@ -65,18 +65,21 @@ def _plot_camera_coordinate_system(ax):
     ax.quiver(0, 0, 0, 0, 0, axis_length, color='blue', 
               arrow_length_ratio=0.1, linewidth=3, label='Z: Forward')
     
+    # ビューアングルを調整：Z軸を奥行方向、Y軸を縦方向に（人間が調整した見やすい角度）
+    ax.view_init(elev=-30, azim=-90-70, roll=0+80)  # 人間が調整した最適な角度
+    
     # 画像平面の表示
     image_distance = 1.5
     image_width = 1.2
     image_height = 0.9
     
-    # 画像平面の四角形
+    # 画像平面の四角形（カメラ座標系に合わせて調整）
     corners = np.array([
-        [-image_width/2, -image_height/2, image_distance],
-        [image_width/2, -image_height/2, image_distance],
-        [image_width/2, image_height/2, image_distance],
-        [-image_width/2, image_height/2, image_distance],
-        [-image_width/2, -image_height/2, image_distance]  # 閉じる
+        [-image_width/2, -image_height/2, image_distance],   # 左上
+        [image_width/2, -image_height/2, image_distance],    # 右上
+        [image_width/2, image_height/2, image_distance],     # 右下
+        [-image_width/2, image_height/2, image_distance],    # 左下
+        [-image_width/2, -image_height/2, image_distance]    # 閉じる
     ])
     
     ax.plot(corners[:, 0], corners[:, 1], corners[:, 2], 'k-', linewidth=2)
@@ -84,11 +87,11 @@ def _plot_camera_coordinate_system(ax):
     # 光学中心と焦点距離の説明
     ax.scatter(0, 0, image_distance, color='orange', s=100, label='Optical Center (cx,cy)')
     
-    # 投影線の例
+    # 投影線の例（標準的なカメラ座標系）
     world_points = np.array([
-        [0.5, 0.3, 2.5],
-        [-0.4, -0.2, 2.8],
-        [0.3, -0.4, 3.0]
+        [0.5, 0.3, 2.5],    # 右上の点
+        [-0.4, -0.2, 2.8],  # 左下の点
+        [0.3, -0.4, 3.0]    # 右下の点
     ])
     
     for point in world_points:
@@ -105,18 +108,24 @@ def _plot_camera_coordinate_system(ax):
         ax.scatter(proj_x, proj_y, image_distance, color='red', s=30)
     
     # ピンホールカメラ方程式の表示
-    ax.text2D(0.02, 0.98, 'Pinhole Camera Model:\nX = (u - cx) * Z / fx\nY = (v - cy) * Z / fy', 
+    ax.text2D(0.02, 0.98, 'Pinhole Camera Model:\nX = (u - cx) * Z / fx\nY = (v - cy) * Z / fy\n\nCoordinate System:\nX: Right, Y: Down, Z: Forward', 
               transform=ax.transAxes, fontsize=9, verticalalignment='top',
               bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.8))
     
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
+    # 軸ラベルを明確に
+    ax.set_xlabel('X (Right)')
+    ax.set_ylabel('Y (Down)')
+    ax.set_zlabel('Z (Forward into scene)')
     ax.set_title('Camera Coordinate System\n& Pinhole Model')
     ax.legend(fontsize=8)
+    
+    # 軸の範囲を調整
     ax.set_xlim([-1, 1])
     ax.set_ylim([-1, 1])
     ax.set_zlim([0, 3])
+    
+    # 軸の比率を等しく保つ
+    ax.set_box_aspect([1,1,1.5])  # Z軸を少し長めに表示
 
 def _plot_depth_conversion_algorithm(ax):
     """深度変換アルゴリズムの可視化"""
@@ -455,6 +464,62 @@ def _plot_grid_compression_mapping_custom(ax, grid_cols, grid_rows):
         x = j * cell_width
         ax.axvline(x=x, color='blue', linewidth=1)
     
+    # いくつかのセルをハイライト（グリッドサイズに応じて調整）
+    max_highlights = min(3, grid_rows * grid_cols // 2)  # グリッドサイズに応じてハイライト数を調整
+    
+    if grid_rows >= 3 and grid_cols >= 3:
+        # 標準的なハイライト位置
+        highlight_cells = [(1, 1), (grid_rows//2, grid_cols//2)]
+        if grid_rows > 3 and grid_cols > 3:
+            highlight_cells.append((grid_rows-2, grid_cols-2))
+    else:
+        # 小さなグリッドの場合
+        highlight_cells = [(0, 1), (1, 0)]
+        if grid_rows > 2 and grid_cols > 2:
+            highlight_cells.append((grid_rows-1, grid_cols-1))
+    
+    colors = ['red', 'green', 'orange']
+    
+    for idx, (row, col) in enumerate(highlight_cells[:len(colors)]):
+        if row < grid_rows and col < grid_cols:  # 範囲チェック
+            x_start = col * cell_width
+            y_start = row * cell_height
+            
+            # セルの塗りつぶし
+            rect = Rectangle((x_start, y_start), cell_width, cell_height,
+                            facecolor=colors[idx], alpha=0.3, edgecolor=colors[idx], linewidth=2)
+            ax.add_patch(rect)
+            
+            # セル中心の計算と表示
+            center_u = x_start + cell_width * 0.5
+            center_v = y_start + cell_height * 0.5
+            ax.plot(center_u, center_v, 'ko', markersize=8)
+            
+            # テキスト位置をセルサイズに応じて調整
+            text_offset_v = max(15, cell_height * 0.2)
+            
+            # グリッド座標の表示
+            ax.text(center_u, center_v - text_offset_v, f'Grid({row},{col})', 
+                    ha='center', fontsize=8, fontweight='bold',
+                    bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.8))
+            
+            # 元画像座標の表示
+            ax.text(center_u, center_v + text_offset_v, f'Image({center_u:.1f},{center_v:.1f})', 
+                    ha='center', fontsize=8,
+                    bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.8))
+    
+    # 座標変換式の表示
+    transform_text = ('Grid to Image Mapping:\n'
+                     'u_original = (u_grid + 0.5) / grid_cols * img_width\n'
+                     'v_original = (v_grid + 0.5) / grid_rows * img_height\n\n'
+                     'Camera Parameter Scaling:\n'
+                     'fx_scaled = fx * (grid_cols / img_width)\n'
+                     'fy_scaled = fy * (grid_rows / img_height)')
+    
+    ax.text(0.7, 0.98, transform_text, transform=ax.transAxes, fontsize=8,
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="lightcyan", alpha=0.9),
+            verticalalignment='top')
+    
     # 圧縮率の計算と表示
     compression_ratio = (grid_cols * grid_rows) / (original_width * original_height)
     compression_text = (f'Compression Ratio: {compression_ratio:.6f}\n'
@@ -462,9 +527,9 @@ def _plot_grid_compression_mapping_custom(ax, grid_cols, grid_rows):
                        f'Compressed: {grid_cols}x{grid_rows} = {grid_cols*grid_rows} cells\n'
                        f'Cell Size: {cell_width}x{cell_height} pixels')
     
-    ax.text(0.02, 0.98, compression_text, transform=ax.transAxes, fontsize=9,
+    ax.text(0.02, 0.5, compression_text, transform=ax.transAxes, fontsize=9,
             bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow", alpha=0.9),
-            verticalalignment='top')
+            verticalalignment='center')
     
     ax.set_xlabel('Image X (u)')
     ax.set_ylabel('Image Y (v)')
