@@ -14,8 +14,8 @@
   },
   "grid_compression": {
     "enabled": true,
-    "target_rows": 12,
-    "target_cols": 16,
+    "target_rows": 24,
+    "target_cols": 32,
     "method": "mean"
   },
   "point_cloud": {
