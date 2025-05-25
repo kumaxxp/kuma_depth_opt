@@ -10,6 +10,7 @@
   },
   "depth_model": {
     "model_name": "MiDaS_small",
+    "model_path": "/opt/m5stack/data/depth_anything/compiled.axmodel",
     "device": "cpu"
   },
   "grid_compression": {
