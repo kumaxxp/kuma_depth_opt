@@ -74,7 +74,12 @@ frame_timestamp = 0
 depth_map_lock = threading.Lock() # Protection for latest_depth_map, latest_camera_frame, latest_depth_grid
 last_inference_time = 0
 INFERENCE_INTERVAL = 0.08
-GRID_COMPRESSION_SIZE = (12, 16) # Grid compression size (rows, cols)
+# Grid compression configuration
+GRID_COMPRESSION_CONFIG = {
+    "target_rows": 12,
+    "target_cols": 16,
+    "method": "mean"
+}
 
 # Camera internal parameters (approximate values - actually obtained by calibration)
 # Values corresponding to raw_depth_map (256x384)
@@ -163,7 +168,7 @@ def inference_thread():
     global latest_depth_map, last_inference_time, latest_depth_grid # ★ latest_depth_grid をグローバル変数として追加
     
     # 設定値確認用デバッグ出力
-    print(f"[Thread] GRID_COMPRESSION_SIZE: {GRID_COMPRESSION_SIZE}")
+    print(f"[Thread] GRID_COMPRESSION_CONFIG: {GRID_COMPRESSION_CONFIG}")
     print(f"[Thread] Camera Parameters: FX={FX}, FY={FY}, CX={CX}, CY={CY}")
     
     while True:
@@ -190,7 +195,7 @@ def inference_thread():
             compression_duration = 0
             if raw_depth_map is not None:
                 start_time_compression = time.perf_counter()
-                compressed_grid = depth_processor.compress_depth_to_grid(raw_depth_map, grid_size=GRID_COMPRESSION_SIZE)
+                compressed_grid = depth_processor.compress_depth_to_grid(raw_depth_map, GRID_COMPRESSION_CONFIG)
                 compression_duration = time.perf_counter() - start_time_compression
                 compression_times.append(compression_duration)
                 if compressed_grid is None:
@@ -568,7 +573,7 @@ def get_top_down_view_stream():
     
     # グローバル変数の状態確認
     print("[TopDownStream] グローバル変数状態チェック:")
-    print(f"[TopDownStream] GRID_COMPRESSION_SIZE: {GRID_COMPRESSION_SIZE}")
+    print(f"[TopDownStream] GRID_COMPRESSION_CONFIG: {GRID_COMPRESSION_CONFIG}")
     print(f"[TopDownStream] Camera Parameters: FX={FX}, FY={FY}, CX={CX}, CY={CY}")
     print(f"[TopDownStream] 圧縮処理に合わせたパラメータ: grid_resolution={grid_resolution}, height_threshold={height_threshold}")
     
@@ -627,8 +632,8 @@ def get_top_down_view_stream():
                 # 点群生成（圧縮データ用に調整）
                 print(f"[TopDownStream] Generating point cloud directly from compressed grid")
                 # カメラパラメータを圧縮率に合わせて調整し、広い視野角をカバー
-                adjusted_fx = FX/GRID_COMPRESSION_SIZE[1]*grid_cols * 0.8  # 視野角を広く
-                adjusted_fy = FY/GRID_COMPRESSION_SIZE[0]*grid_rows * 0.8  # 視野角を広く
+                adjusted_fx = FX/GRID_COMPRESSION_CONFIG["target_cols"]*grid_cols * 0.8  # 視野角を広く
+                adjusted_fy = FY/GRID_COMPRESSION_CONFIG["target_rows"]*grid_rows * 0.8  # 視野角を広く
                 print(f"[TopDownStream] Adjusted camera parameters: fx={adjusted_fx}, fy={adjusted_fy}")
                 
                 point_cloud = depth_to_point_cloud(
@@ -638,8 +643,8 @@ def get_top_down_view_stream():
                     cx=grid_cols/2.0,  # 圧縮グリッドの中心点
                     cy=grid_rows/2.0, 
                     is_grid_data=True,
-                    original_height=GRID_COMPRESSION_SIZE[0],
-                    original_width=GRID_COMPRESSION_SIZE[1],
+                    original_height=GRID_COMPRESSION_CONFIG["target_rows"],
+                    original_width=GRID_COMPRESSION_CONFIG["target_cols"],
                     grid_rows=grid_rows,
                     grid_cols=grid_cols
                 )
