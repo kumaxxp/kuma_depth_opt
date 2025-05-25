@@ -13,9 +13,9 @@
     "device": "cpu"
   },
   "grid_compression": {
-    "enabled": false,
-    "target_rows": 6,
-    "target_cols": 8,
+    "enabled": true,
+    "target_rows": 12,
+    "target_cols": 16,
     "method": "mean"
   },
   "point_cloud": {

@@ -9,8 +9,8 @@
     "endpoint": "/pointcloud"
   },
   "client": {
-    "polling_interval_ms": 200, 
-    "request_timeout_s": 1.0
+    "polling_interval_ms": 500, 
+    "request_timeout_s": 10.0
   },
   "visualization": {
     "plot_limit_x_m": [-2.0, 2.0],
