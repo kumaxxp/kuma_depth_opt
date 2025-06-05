@@ -290,10 +290,18 @@ def create_top_down_occupancy_grid(points, grid_params):
         logger.debug(f"[OccGrid] Processing {len(unique_cells)} unique grid cells")
         
         for (x, z), heights in unique_cells.items():
-            # 各セルに分類を適用 (既存のロジック)
-            # ...existing code...
-            # 基本的には占有セルとして設定
-            grid[z, x] = 1
+            # 各セル内の高さの平均を用いて状態を判定する
+            cell_height = float(np.mean(heights))
+
+            # 高さが障害物閾値より高い場合は障害物とみなす
+            if cell_height >= adaptive_obstacle_threshold:
+                grid[z, x] = 1
+            # 床面閾値より低い場合は通行可能
+            elif cell_height <= adaptive_floor_threshold:
+                grid[z, x] = 2
+            else:
+                # どちらでもない場合は未知セルとして残す
+                grid[z, x] = 0
         
         # Simple grid statistics
         unknown_cells = np.sum(grid == 0)
